@@ -1,0 +1,87 @@
+<?php
+
+declare(strict_types=1);
+
+namespace App\Repositories\Interfaces;
+
+use App\Models\Menu;
+use App\Models\MenuItem;
+use Illuminate\Support\Collection;
+
+interface MenuRepositoryInterface
+{
+    /**
+     * Find menu by ID
+     *
+     * @param int $id
+     * @return Menu|null
+     */
+    public function findById(int $id): ?Menu;
+
+    /**
+     * Find menu by location
+     *
+     * @param string $location
+     * @return Menu|null
+     */
+    public function findByLocation(string $location): ?Menu;
+
+    /**
+     * Create new menu
+     *
+     * @param array $data
+     * @return Menu
+     */
+    public function create(array $data): Menu;
+
+    /**
+     * Update menu
+     *
+     * @param int $id
+     * @param array $data
+     * @return bool
+     */
+    public function update(int $id, array $data): bool;
+
+    /**
+     * Delete menu
+     *
+     * @param int $id
+     * @return bool
+     */
+    public function delete(int $id): bool;
+
+    /**
+     * Get all menus
+     *
+     * @return Collection
+     */
+    public function getAll(): Collection;
+
+    /**
+     * Update menu item order
+     *
+     * @param array $items
+     * @param int|null $parentId
+     * @return bool
+     */
+    public function updateItemOrder(array $items, ?int $parentId = null): bool;
+
+    /**
+     * Add menu item
+     *
+     * @param int $menuId
+     * @param array $data
+     * @return MenuItem
+     */
+    public function addMenuItem(int $menuId, array $data): MenuItem;
+
+    /**
+     * Update menu item
+     *
+     * @param int $itemId
+     * @param array $data
+     * @return bool
+     */
+    public function updateMenuItem(int $itemId, array $data): bool;
+}

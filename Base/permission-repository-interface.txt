@@ -1,0 +1,98 @@
+<?php
+
+declare(strict_types=1);
+
+namespace App\Repositories\Interfaces;
+
+use App\Models\Permission;
+use Illuminate\Support\Collection;
+
+interface PermissionRepositoryInterface
+{
+    /**
+     * Find permission by ID
+     *
+     * @param int $id
+     * @return Permission|null
+     */
+    public function findById(int $id): ?Permission;
+
+    /**
+     * Find permission by name
+     *
+     * @param string $name
+     * @return Permission|null
+     */
+    public function findByName(string $name): ?Permission;
+
+    /**
+     * Create new permission
+     *
+     * @param array $data
+     * @return Permission
+     */
+    public function create(array $data): Permission;
+
+    /**
+     * Update permission
+     *
+     * @param int $id
+     * @param array $data
+     * @return bool
+     */
+    public function update(int $id, array $data): bool;
+
+    /**
+     * Delete permission
+     *
+     * @param int $id
+     * @return bool
+     */
+    public function delete(int $id): bool;
+
+    /**
+     * Get all permissions
+     *
+     * @return Collection
+     */
+    public function getAll(): Collection;
+
+    /**
+     * Get permissions by module
+     *
+     * @param string $module
+     * @return Collection
+     */
+    public function getByModule(string $module): Collection;
+
+    /**
+     * Get permissions by group
+     *
+     * @param string $group
+     * @return Collection
+     */
+    public function getByGroup(string $group): Collection;
+
+    /**
+     * Get list of modules
+     *
+     * @return Collection
+     */
+    public function getModules(): Collection;
+
+    /**
+     * Get list of groups
+     *
+     * @return Collection
+     */
+    public function getGroups(): Collection;
+
+    /**
+     * Sync role permissions
+     *
+     * @param int $roleId
+     * @param array $permissionIds
+     * @return bool
+     */
+    public function syncRolePermissions(int $roleId, array $permissionIds): bool;
+}

@@ -1,0 +1,52 @@
+<?php
+
+declare(strict_types=1);
+
+namespace App\Models;
+
+use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
+use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\SoftDeletes;
+
+class Permission extends Model
+{
+    use HasFactory, SoftDeletes;
+
+    protected $fillable = [
+        'name',
+        'slug',
+        'description',
+        'module',
+        'group'
+    ];
+
+    protected $casts = [
+        'created_at' => 'datetime',
+        'updated_at' => 'datetime',
+        'deleted_at' => 'datetime'
+    ];
+
+    public static array $rules = [
+        'name' => 'required|string|max:255',
+        'slug' => 'required|string|max:255|unique:permissions,slug',
+        'description' => 'nullable|string',
+        'module' => 'required|string|max:50',
+        'group' => 'required|string|max:50'
+    ];
+
+    public function roles(): BelongsToMany
+    {
+        return $this->belongsToMany(Role::class);
+    }
+
+    public function scopeModule($query, string $module)
+    {
+        return $query->where('module', $module);
+    }
+
+    public function scopeGroup($query, string $group)
+    {
+        return $query->where('group', $group);
+    }
+}

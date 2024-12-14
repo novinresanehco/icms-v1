@@ -1,0 +1,133 @@
+<?php
+
+declare(strict_types=1);
+
+namespace App\Repositories;
+
+use App\Models\Role;
+use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
+use App\Repositories\Interfaces\RoleRepositoryInterface;
+
+class RoleRepository implements RoleRepositoryInterface
+{
+    private const CACHE_PREFIX = 'role:';
+    private const CACHE_TTL = 3600;
+
+    public function __construct(
+        private readonly Role $model
+    ) {}
+
+    public function findById(int $id): ?Role
+    {
+        return Cache::remember(
+            self::CACHE_PREFIX . $id,
+            self::CACHE_TTL,
+            fn () => $this->model->with('permissions')->find($id)
+        );
+    }
+
+    public function findByName(string $name): ?Role
+    {
+        return Cache::remember(
+            self::CACHE_PREFIX . "name:{$name}",
+            self::CACHE_TTL,
+            fn () => $this->model->with('permissions')->where('name', $name)->first()
+        );
+    }
+
+    public function create(array $data): Role
+    {
+        return DB::transaction(function () use ($data) {
+            $role = $this->model->create([
+                'name' => $data['name'],
+                'slug' => $data['slug'],
+                'description' => $data['description'] ?? null,
+                'is_system' => $data['is_system'] ?? false,
+                'level' => $data['level'] ?? 0
+            ]);
+
+            if (isset($data['permissions'])) {
+                $role->permissions()->sync($data['permissions']);
+            }
+
+            $this->clearCache();
+
+            return $role;
+        });
+    }
+
+    public function update(int $id, array $data): bool
+    {
+        return DB::transaction(function () use ($id, $data) {
+            $role = $this->findById($id);
+            
+            if (!$role || $role->is_system) {
+                return false;
+            }
+
+            $updated = $role->update([
+                'name' => $data['name'] ?? $role->name,
+                'slug' => $data['slug'] ?? $role->slug,
+                'description' => $data['description'] ?? $role->description,
+                'level' => $data['level'] ?? $role->level
+            ]);
+
+            if (isset($data['permissions'])) {
+                $role->permissions()->sync($data['permissions']);
+            }
+
+            if ($updated) {
+                $this->clearCache();
+            }
+
+            return $updated;
+        });
+    }
+
+    public function delete(int $id): bool
+    {
+        return DB::transaction(function () use ($id) {
+            $role = $this->findById($id);
+            
+            if (!$role || $role->is_system) {
+                return false;
+            }
+
+            // Remove role from users
+            $role->users()->detach();
+            
+            // Remove role permissions
+            $role->permissions()->detach();
+            
+            $deleted = $role->delete();
+
+            if ($deleted) {
+                $this->clearCache();
+            }
+
+            return $deleted;
+        });
+    }
+
+    public function getAll(): Collection
+    {
+        return Cache::remember(
+            self::CACHE_PREFIX . 'all',
+            self::CACHE_TTL,
+            fn () => $this->model->with('permissions')->orderBy('level', 'desc')->get()
+        );
+    }
+
+    public function getSystemRoles(): Collection
+    {
+        return Cache::remember(
+            self::CACHE_PREFIX . 'system',
+            self::CACHE_TTL,
+            fn () => $this->model->where('is_system', true)->get()
+        );
+    }
+
+    public function syncUserRoles(int $userId, array $roleIds): bool
+    {

@@ -1,0 +1,116 @@
+<?php
+
+namespace App\Http\Controllers\Admin;
+
+use App\Http\Controllers\Controller;
+use App\Services\MenuService;
+use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
+use Illuminate\Http\Response;
+use Illuminate\Support\Facades\Log;
+
+class MenuController extends Controller
+{
+    public function __construct(
+        protected MenuService $menuService
+    ) {}
+
+    public function index(): JsonResponse
+    {
+        try {
+            $menus = $this->menuService->getActiveMenus();
+            return response()->json(['data' => $menus]);
+        } catch (\Exception $e) {
+            Log::error('Failed to fetch menus: ' . $e->getMessage());
+            return response()->json(['error' => 'Failed to fetch menus'], Response::HTTP_INTERNAL_SERVER_ERROR);
+        }
+    }
+
+    public function store(Request $request): JsonResponse
+    {
+        try {
+            $menu = $this->menuService->createMenu($request->all());
+            return response()->json(['data' => $menu], Response::HTTP_CREATED);
+        } catch (\Exception $e) {
+            Log::error('Failed to create menu: ' . $e->getMessage());
+            return response()->json(['error' => $e->getMessage()], Response::HTTP_BAD_REQUEST);
+        }
+    }
+
+    public function show(int $id): JsonResponse
+    {
+        try {
+            $menu = $this->menuService->findMenu($id);
+            return response()->json(['data' => $menu]);
+        } catch (\Exception $e) {
+            Log::error('Failed to fetch menu: ' . $e->getMessage());
+            return response()->json(['error' => $e->getMessage()], Response::HTTP_NOT_FOUND);
+        }
+    }
+
+    public function update(Request $request, int $id): JsonResponse
+    {
+        try {
+            $menu = $this->menuService->updateMenu($id, $request->all());
+            return response()->json(['data' => $menu]);
+        } catch (\Exception $e) {
+            Log::error('Failed to update menu: ' . $e->getMessage());
+            return response()->json(['error' => $e->getMessage()], Response::HTTP_BAD_REQUEST);
+        }
+    }
+
+    public function destroy(int $id): JsonResponse
+    {
+        try {
+            $this->menuService->deleteMenu($id);
+            return response()->json(null, Response::HTTP_NO_CONTENT);
+        } catch (\Exception $e) {
+            Log::error('Failed to delete menu: ' . $e->getMessage());
+            return response()->json(['error' => $e->getMessage()], Response::HTTP_BAD_REQUEST);
+        }
+    }
+
+    public function addItem(Request $request, int $menuId): JsonResponse
+    {
+        try {
+            $menu = $this->menuService->addMenuItem($menuId, $request->all());
+            return response()->json(['data' => $menu], Response::HTTP_CREATED);
+        } catch (\Exception $e) {
+            Log::error('Failed to add menu item: ' . $e->getMessage());
+            return response()->json(['error' => $e->getMessage()], Response::HTTP_BAD_REQUEST);
+        }
+    }
+
+    public function updateItem(Request $request, int $itemId): JsonResponse
+    {
+        try {
+            $menu = $this->menuService->updateMenuItem($itemId, $request->all());
+            return response()->json(['data' => $menu]);
+        } catch (\Exception $e) {
+            Log::error('Failed to update menu item: ' . $e->getMessage());
+            return response()->json(['error' => $e->getMessage()], Response::HTTP_BAD_REQUEST);
+        }
+    }
+
+    public function deleteItem(int $itemId): JsonResponse
+    {
+        try {
+            $this->menuService->deleteMenuItem($itemId);
+            return response()->json(null, Response::HTTP_NO_CONTENT);
+        } catch (\Exception $e) {
+            Log::error('Failed to delete menu item: ' . $e->getMessage());
+            return response()->json(['error' => $e->getMessage()], Response::HTTP_BAD_REQUEST);
+        }
+    }
+
+    public function reorderItems(Request $request): JsonResponse
+    {
+        try {
+            $this->menuService->reorderMenuItems($request->input('items', []));
+            return response()->json(['message' => 'Items reordered successfully']);
+        } catch (\Exception $e) {
+            Log::error('Failed to reorder menu items: ' . $e->getMessage());
+            return response()->json(['error' => $e->getMessage()], Response::HTTP_BAD_REQUEST);
+        }
+    }
+}

@@ -1,0 +1,135 @@
+<?php
+
+namespace App\Repositories;
+
+use App\Models\Queue;
+use App\Repositories\Contracts\QueueRepositoryInterface;
+use Illuminate\Database\Eloquent\Collection;
+use Illuminate\Support\Facades\Cache;
+
+class QueueRepository extends BaseRepository implements QueueRepositoryInterface
+{
+    protected array $searchableFields = ['queue', 'payload'];
+    protected array $filterableFields = ['status', 'queue'];
+
+    public function getFailedJobs(array $dateRange = []): Collection
+    {
+        $query = $this->model->newQuery()
+            ->where('status', 'failed');
+
+        if (!empty($dateRange)) {
+            $query->whereBetween('failed_at', $dateRange);
+        }
+
+        return $query->orderByDesc('failed_at')->get();
+    }
+
+    public function getPendingJobs(string $queue = null): Collection
+    {
+        $query = $this->model->newQuery()
+            ->where('status', 'pending');
+
+        if ($queue) {
+            $query->where('queue', $queue);
+        }
+
+        return $query->orderBy('available_at')->get();
+    }
+
+    public function retryJob(int $id): bool
+    {
+        try {
+            $job = $this->find($id);
+            
+            if (!$job || $job->status !== 'failed') {
+                return false;
+            }
+
+            $this->update($id, [
+                'status' => 'pending',
+                'attempts' => 0,
+                'failed_at' => null,
+                'error' => null,
+                'available_at' => now()
+            ]);
+
+            return true;
+        } catch (\Exception $e) {
+            \Log::error('Error retrying job: ' . $e->getMessage());
+            return false;
+        }
+    }
+
+    public function retryAllFailed(): int
+    {
+        try {
+            return $this->model
+                ->where('status', 'failed')
+                ->update([
+                    'status' => 'pending',
+                    'attempts' => 0,
+                    'failed_at' => null,
+                    'error' => null,
+                    'available_at' => now()
+                ]);
+        } catch (\Exception $e) {
+            \Log::error('Error retrying all failed jobs: ' . $e->getMessage());
+            return 0;
+        }
+    }
+
+    public function getQueueStats(): array
+    {
+        $cacheKey = 'queue.stats';
+
+        return Cache::tags(['queue'])->remember($cacheKey, 300, function() {
+            return [
+                'pending' => $this->model->where('status', 'pending')->count(),
+                'processing' => $this->model->where('status', 'processing')->count(),
+                'failed' => $this->model->where('status', 'failed')->count(),
+                'completed' => $this->model->where('status', 'completed')->count(),
+                'by_queue' => $this->model->groupBy('queue')
+                    ->selectRaw('queue, count(*) as count')
+                    ->pluck('count', 'queue')
+                    ->toArray()
+            ];
+        });
+    }
+
+    public function markAsProcessing(int $id): bool
+    {
+        try {
+            return (bool) $this->update($id, [
+                'status' => 'processing',
+                'started_at' => now(),
+                'attempts' => $this->model->find($id)->attempts + 1
+            ]);
+        } catch (\Exception $e) {
+            \Log::error('Error marking job as processing: ' . $e->getMessage());
+            return false;
+        }
+    }
+
+    public function markAsCompleted(int $id): bool
+    {
+        try {
+            return (bool) $this->update($id, [
+                'status' => 'completed',
+                'completed_at' => now()
+            ]);
+        } catch (\Exception $e) {
+            \Log::error('Error marking job as completed: ' . $e->getMessage());
+            return false;
+        }
+    }
+
+    public function markAsFailed(int $id, string $error): bool
+    {
+        try {
+            return (bool) $this->update($id, [
+                'status' => 'failed',
+                'failed_at' => now(),
+                'error' => $error
+            ]);
+        } catch (\Exception $e) {
+            \Log::error('Error marking job as

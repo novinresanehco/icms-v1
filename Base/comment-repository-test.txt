@@ -1,0 +1,102 @@
+<?php
+
+namespace Tests\Unit\Repositories;
+
+use Tests\TestCase;
+use App\Models\Comment;
+use App\Models\User;
+use App\Repositories\CommentRepository;
+use Illuminate\Foundation\Testing\RefreshDatabase;
+
+class CommentRepositoryTest extends TestCase
+{
+    use RefreshDatabase;
+
+    private CommentRepository $repository;
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+        $this->repository = new CommentRepository(new Comment());
+    }
+
+    public function test_get_for_content()
+    {
+        Comment::factory()->count(3)->create([
+            'content_type' => 'post',
+            'content_id' => 1,
+            'status' => 'approved'
+        ]);
+
+        Comment::factory()->create([
+            'content_type' => 'post',
+            'content_id' => 1,
+            'status' => 'pending'
+        ]);
+
+        $result = $this->repository->getForContent('post', 1);
+
+        $this->assertEquals(3, $result->total());
+        $this->assertEquals('approved', $result->first()->status);
+    }
+
+    public function test_get_pending_comments()
+    {
+        Comment::factory()->count(2)->create(['status' => 'pending']);
+        Comment::factory()->create(['status' => 'approved']);
+
+        $result = $this->repository->getPendingComments();
+
+        $this->assertEquals(2, $result->total());
+        $this->assertEquals('pending', $result->first()->status);
+    }
+
+    public function test_get_comment_stats()
+    {
+        Comment::factory()->count(2)->create(['status' => 'approved']);
+        Comment::factory()->create(['status' => 'pending']);
+        Comment::factory()->create(['status' => 'spam']);
+
+        $stats = $this->repository->getCommentStats();
+
+        $this->assertEquals(4, $stats['total']);
+        $this->assertEquals(2, $stats['approved']);
+        $this->assertEquals(1, $stats['pending']);
+        $this->assertEquals(1, $stats['spam']);
+    }
+
+    public function test_update_status()
+    {
+        $comment = Comment::factory()->create(['status' => 'pending']);
+
+        $result = $this->repository->updateStatus(
+            $comment->id,
+            'approved',
+            'Approved by moderator'
+        );
+
+        $this->assertTrue($result);
+        $this->assertEquals('approved', $comment->fresh()->status);
+        $this->assertEquals('Approved by moderator', $comment->fresh()->moderation_note);
+    }
+
+    public function test_bulk_update_status()
+    {
+        $comments = Comment::factory()->count(3)->create(['status' => 'pending']);
+
+        $result = $this->repository->bulkUpdateStatus(
+            $comments->pluck('id')->toArray(),
+            'approved',
+            'Bulk approval'
+        );
+
+        $this->assertTrue($result);
+        foreach ($comments as $comment) {
+            $this->assertEquals('approved', $comment->fresh()->status);
+            $this->assertEquals('Bulk approval', $comment->fresh()->moderation_note);
+        }
+    }
+
+    public function test_get_user_comments()
+    {
+        $user = User::factory()->create();

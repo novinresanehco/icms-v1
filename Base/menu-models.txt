@@ -1,0 +1,118 @@
+<?php
+
+declare(strict_types=1);
+
+namespace App\Models;
+
+use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\SoftDeletes;
+
+class Menu extends Model
+{
+    use HasFactory, SoftDeletes;
+
+    protected $fillable = [
+        'name',
+        'location',
+        'description',
+        'settings',
+        'is_active'
+    ];
+
+    protected $casts = [
+        'settings' => 'array',
+        'is_active' => 'boolean',
+        'created_at' => 'datetime',
+        'updated_at' => 'datetime',
+        'deleted_at' => 'datetime'
+    ];
+
+    public function items(): HasMany
+    {
+        return $this->hasMany(MenuItem::class)->whereNull('parent_id');
+    }
+
+    public function allItems(): HasMany
+    {
+        return $this->hasMany(MenuItem::class);
+    }
+}
+
+class MenuItem extends Model
+{
+    use HasFactory;
+
+    protected $fillable = [
+        'menu_id',
+        'parent_id',
+        'title',
+        'url',
+        'target',
+        'icon',
+        'class',
+        'order',
+        'conditions',
+        'is_active'
+    ];
+
+    protected $casts = [
+        'conditions' => 'array',
+        'is_active' => 'boolean',
+        'order' => 'integer',
+        'created_at' => 'datetime',
+        'updated_at' => 'datetime'
+    ];
+
+    public function menu(): BelongsTo
+    {
+        return $this->belongsTo(Menu::class);
+    }
+
+    public function parent(): BelongsTo
+    {
+        return $this->belongsTo(self::class, 'parent_id');
+    }
+
+    public function children(): HasMany
+    {
+        return $this->hasMany(self::class, 'parent_id')->orderBy('order');
+    }
+
+    public function allChildren(): HasMany
+    {
+        return $this->children()->with('allChildren');
+    }
+
+    public function scopeActive($query)
+    {
+        return $query->where('is_active', true);
+    }
+
+    public function isAccessibleToUser(?User $user = null): bool
+    {
+        if (empty($this->conditions)) {
+            return true;
+        }
+
+        foreach ($this->conditions as $condition) {
+            if (!$this->checkCondition($condition, $user)) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    protected function checkCondition(array $condition, ?User $user): bool
+    {
+        return match ($condition['type']) {
+            'auth' => !is_null($user),
+            'guest' => is_null($user),
+            'role' => $user && $user->hasRole($condition['value']),
+            'permission' => $user && $user->hasPermission($condition['value']),
+            default => true
+        };
+    }
+}

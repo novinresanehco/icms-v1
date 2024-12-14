@@ -1,0 +1,143 @@
+<?php
+
+namespace App\Repositories;
+
+use App\Models\User;
+use App\Repositories\Contracts\UserRepositoryInterface;
+use Illuminate\Database\Eloquent\Collection;
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Hash;
+use Illuminate\Pagination\LengthAwarePaginator;
+
+class UserRepository extends BaseRepository implements UserRepositoryInterface
+{
+    protected array $searchableFields = ['name', 'email', 'username'];
+    protected array $filterableFields = ['status', 'role', 'department_id'];
+
+    /**
+     * Create new user with role
+     */
+    public function createWithRole(array $data, string $role): User
+    {
+        $data['password'] = Hash::make($data['password']);
+        
+        $user = $this->create($data);
+        $user->assignRole($role);
+
+        Cache::tags(['users'])->flush();
+
+        return $user;
+    }
+
+    /**
+     * Get users by role
+     */
+    public function getByRole(string $role, array $relations = []): Collection
+    {
+        $cacheKey = 'users.role.' . $role . '.' . md5(serialize($relations));
+
+        return Cache::tags(['users'])->remember($cacheKey, 3600, function() use ($role, $relations) {
+            return $this->model
+                ->role($role)
+                ->with($relations)
+                ->get();
+        });
+    }
+
+    /**
+     * Get active users with roles and permissions
+     */
+    public function getActiveUsers(array $relations = ['roles', 'permissions']): Collection
+    {
+        $cacheKey = 'users.active.' . md5(serialize($relations));
+
+        return Cache::tags(['users'])->remember($cacheKey, 3600, function() use ($relations) {
+            return $this->model
+                ->where('status', 'active')
+                ->with($relations)
+                ->get();
+        });
+    }
+
+    /**
+     * Update user profile
+     */
+    public function updateProfile(int $id, array $data): User
+    {
+        if (isset($data['password'])) {
+            $data['password'] = Hash::make($data['password']);
+        }
+
+        $user = $this->update($id, $data);
+        
+        Cache::tags(['users'])->flush();
+
+        return $user;
+    }
+
+    /**
+     * Get users with recent activity
+     */
+    public function getRecentlyActive(int $minutes = 15, int $limit = 10): Collection
+    {
+        return $this->model
+            ->where('last_active_at', '>=', now()->subMinutes($minutes))
+            ->orderByDesc('last_active_at')
+            ->limit($limit)
+            ->get();
+    }
+
+    /**
+     * Search users with filters and pagination
+     */
+    public function searchUsers(
+        string $term = '',
+        array $filters = [],
+        int $perPage = 15
+    ): LengthAwarePaginator {
+        $query = $this->model->newQuery();
+
+        if ($term) {
+            $query->where(function($q) use ($term) {
+                foreach ($this->searchableFields as $field) {
+                    $q->orWhere($field, 'LIKE', "%{$term}%");
+                }
+            });
+        }
+
+        foreach ($filters as $field => $value) {
+            if (in_array($field, $this->filterableFields)) {
+                $query->where($field, $value);
+            }
+        }
+
+        return $query->paginate($perPage);
+    }
+
+    /**
+     * Update last active timestamp
+     */
+    public function updateLastActive(int $id): bool
+    {
+        try {
+            $this->update($id, ['last_active_at' => now()]);
+            return true;
+        } catch (\Exception $e) {
+            \Log::error('Error updating user last active: ' . $e->getMessage());
+            return false;
+        }
+    }
+
+    /**
+     * Get user statistics
+     */
+    public function getUserStats(): array
+    {
+        $cacheKey = 'users.stats';
+
+        return Cache::tags(['users'])->remember($cacheKey, 3600, function() {
+            return [
+                'total' => $this->model->count(),
+                'active' => $this->model->where('status', 'active')->count(),
+                'inactive' => $this->model->where('status', 'inactive')->count(),
+                'blocked' => $this->

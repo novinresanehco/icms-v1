@@ -1,0 +1,55 @@
+<?php
+
+namespace App\Models;
+
+use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Factories\HasFactory;
+
+class ContentVersion extends Model
+{
+    use HasFactory;
+
+    protected $fillable = [
+        'content_id',
+        'data',
+        'created_by'
+    ];
+
+    protected $casts = [
+        'data' => 'array'
+    ];
+
+    public function content(): BelongsTo
+    {
+        return $this->belongsTo(Content::class);
+    }
+
+    public function creator(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'created_by');
+    }
+
+    public function getDiffAttribute(): array
+    {
+        if (!$this->content) {
+            return [];
+        }
+
+        $previousVersion = static::where('content_id', $this->content_id)
+            ->where('id', '<', $this->id)
+            ->orderBy('id', 'desc')
+            ->first();
+
+        if (!$previousVersion) {
+            return [];
+        }
+
+        return $this->calculateDiff($previousVersion->data, $this->data);
+    }
+
+    protected function calculateDiff(array $old, array $new): array
+    {
+        $diff = [];
+        foreach ($new as $key => $value) {
+            if (!isset($old[$key]

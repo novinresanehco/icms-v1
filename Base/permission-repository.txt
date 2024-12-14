@@ -1,0 +1,182 @@
+<?php
+
+declare(strict_types=1);
+
+namespace App\Repositories;
+
+use App\Models\Permission;
+use App\Models\Role;
+use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
+use App\Repositories\Interfaces\PermissionRepositoryInterface;
+
+class PermissionRepository implements PermissionRepositoryInterface
+{
+    private const CACHE_PREFIX = 'permission:';
+    private const CACHE_TTL = 3600;
+
+    public function __construct(
+        private readonly Permission $model,
+        private readonly Role $roleModel
+    ) {}
+
+    public function findById(int $id): ?Permission
+    {
+        return Cache::remember(
+            self::CACHE_PREFIX . $id,
+            self::CACHE_TTL,
+            fn () => $this->model->find($id)
+        );
+    }
+
+    public function findByName(string $name): ?Permission
+    {
+        return Cache::remember(
+            self::CACHE_PREFIX . "name:{$name}",
+            self::CACHE_TTL,
+            fn () => $this->model->where('name', $name)->first()
+        );
+    }
+
+    public function create(array $data): Permission
+    {
+        $permission = $this->model->create([
+            'name' => $data['name'],
+            'slug' => $data['slug'],
+            'description' => $data['description'] ?? null,
+            'module' => $data['module'] ?? 'core',
+            'group' => $data['group'] ?? 'general'
+        ]);
+
+        if (isset($data['roles'])) {
+            $permission->roles()->sync($data['roles']);
+        }
+
+        $this->clearCache();
+
+        return $permission;
+    }
+
+    public function update(int $id, array $data): bool
+    {
+        $permission = $this->findById($id);
+        
+        if (!$permission) {
+            return false;
+        }
+
+        $updated = $permission->update([
+            'name' => $data['name'] ?? $permission->name,
+            'slug' => $data['slug'] ?? $permission->slug,
+            'description' => $data['description'] ?? $permission->description,
+            'module' => $data['module'] ?? $permission->module,
+            'group' => $data['group'] ?? $permission->group
+        ]);
+
+        if (isset($data['roles'])) {
+            $permission->roles()->sync($data['roles']);
+        }
+
+        if ($updated) {
+            $this->clearCache();
+        }
+
+        return $updated;
+    }
+
+    public function delete(int $id): bool
+    {
+        return DB::transaction(function () use ($id) {
+            $permission = $this->findById($id);
+            
+            if (!$permission) {
+                return false;
+            }
+
+            // Remove permission from roles
+            $permission->roles()->detach();
+            
+            $deleted = $permission->delete();
+
+            if ($deleted) {
+                $this->clearCache();
+            }
+
+            return $deleted;
+        });
+    }
+
+    public function getAll(): Collection
+    {
+        return Cache::remember(
+            self::CACHE_PREFIX . 'all',
+            self::CACHE_TTL,
+            fn () => $this->model->orderBy('module')->orderBy('name')->get()
+        );
+    }
+
+    public function getByModule(string $module): Collection
+    {
+        return Cache::remember(
+            self::CACHE_PREFIX . "module:{$module}",
+            self::CACHE_TTL,
+            fn () => $this->model->where('module', $module)->get()
+        );
+    }
+
+    public function getByGroup(string $group): Collection
+    {
+        return Cache::remember(
+            self::CACHE_PREFIX . "group:{$group}",
+            self::CACHE_TTL,
+            fn () => $this->model->where('group', $group)->get()
+        );
+    }
+
+    public function getModules(): Collection
+    {
+        return Cache::remember(
+            self::CACHE_PREFIX . 'modules',
+            self::CACHE_TTL,
+            fn () => $this->model->select('module')
+                ->distinct()
+                ->orderBy('module')
+                ->pluck('module')
+        );
+    }
+
+    public function getGroups(): Collection
+    {
+        return Cache::remember(
+            self::CACHE_PREFIX . 'groups',
+            self::CACHE_TTL,
+            fn () => $this->model->select('group')
+                ->distinct()
+                ->orderBy('group')
+                ->pluck('group')
+        );
+    }
+
+    public function syncRolePermissions(int $roleId, array $permissionIds): bool
+    {
+        $role = $this->roleModel->find($roleId);
+        
+        if (!$role) {
+            return false;
+        }
+
+        $role->permissions()->sync($permissionIds);
+        $this->clearCache();
+
+        return true;
+    }
+
+    protected function clearCache(): void
+    {
+        $keys = ['all', 'modules', 'groups'];
+        foreach ($keys as $key) {
+            Cache::forget(self::CACHE_PREFIX . $key);
+        }
+    }
+}

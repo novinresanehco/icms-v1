@@ -1,0 +1,129 @@
+<?php
+
+namespace App\Repositories;
+
+use App\Models\Widget;
+use App\Repositories\Contracts\WidgetRepositoryInterface;
+use Illuminate\Database\Eloquent\Collection;
+use Illuminate\Support\Facades\Cache;
+
+class WidgetRepository extends BaseRepository implements WidgetRepositoryInterface
+{
+    protected array $searchableFields = ['name', 'description'];
+    protected array $filterableFields = ['type', 'status', 'location'];
+
+    public function getActiveWidgets(string $location = null): Collection
+    {
+        $cacheKey = 'widgets.active' . ($location ? '.' . $location : '');
+
+        return Cache::tags(['widgets'])->remember($cacheKey, 3600, function() use ($location) {
+            $query = $this->model->where('status', 'active');
+
+            if ($location) {
+                $query->where('location', $location);
+            }
+
+            return $query->orderBy('sort_order')->get();
+        });
+    }
+
+    public function updateOrder(array $widgets): bool
+    {
+        try {
+            foreach ($widgets as $index => $widgetId) {
+                $this->update($widgetId, [
+                    'sort_order' => $index
+                ]);
+            }
+
+            Cache::tags(['widgets'])->flush();
+
+            return true;
+        } catch (\Exception $e) {
+            \Log::error('Error updating widget order: ' . $e->getMessage());
+            return false;
+        }
+    }
+
+    public function updateSettings(int $id, array $settings): Widget
+    {
+        $widget = $this->find($id);
+        
+        $updatedSettings = array_merge(
+            $widget->settings ?? [],
+            $settings
+        );
+
+        $widget = $this->update($id, [
+            'settings' => $updatedSettings
+        ]);
+
+        Cache::tags(['widgets'])->flush();
+
+        return $widget;
+    }
+
+    public function duplicate(int $id): ?Widget
+    {
+        $widget = $this->find($id);
+
+        if (!$widget) {
+            return null;
+        }
+
+        $duplicate = $this->create([
+            'name' => $widget->name . ' (copy)',
+            'type' => $widget->type,
+            'description' => $widget->description,
+            'location' => $widget->location,
+            'settings' => $widget->settings,
+            'sort_order' => $this->getNextSortOrder($widget->location),
+            'status' => 'inactive'
+        ]);
+
+        Cache::tags(['widgets'])->flush();
+
+        return $duplicate;
+    }
+
+    public function getByType(string $type): Collection
+    {
+        $cacheKey = 'widgets.type.' . $type;
+
+        return Cache::tags(['widgets'])->remember($cacheKey, 3600, function() use ($type) {
+            return $this->model
+                ->where('type', $type)
+                ->orderBy('sort_order')
+                ->get();
+        });
+    }
+
+    public function toggleStatus(int $id): bool
+    {
+        try {
+            $widget = $this->find($id);
+            
+            $this->update($id, [
+                'status' => $widget->status === 'active' ? 'inactive' : 'active'
+            ]);
+
+            Cache::tags(['widgets'])->flush();
+
+            return true;
+        } catch (\Exception $e) {
+            \Log::error('Error toggling widget status: ' . $e->getMessage());
+            return false;
+        }
+    }
+
+    protected function getNextSortOrder(string $location): int
+    {
+        return $this->model
+            ->where('location', $location)
+            ->max('sort_order') + 1;
+    }
+
+    public function create(array $data): Widget
+    {
+        if (!isset($data['sort_order'])) {
+            $data['sort

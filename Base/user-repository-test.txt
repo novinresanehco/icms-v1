@@ -1,0 +1,145 @@
+<?php
+
+namespace Tests\Unit\Repositories;
+
+use Tests\TestCase;
+use App\Models\User;
+use App\Models\Role;
+use App\Models\Department;
+use App\Models\Permission;
+use App\Repositories\UserRepository;
+use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Hash;
+
+class UserRepositoryTest extends TestCase
+{
+    use RefreshDatabase;
+
+    private UserRepository $repository;
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+        $this->repository = new UserRepository(new User());
+    }
+
+    public function test_get_active_by_role()
+    {
+        $role = Role::factory()->create(['name' => 'editor']);
+        $user = User::factory()->create(['status' => 'active']);
+        $user->roles()->attach($role->id);
+
+        User::factory()->create(['status' => 'inactive']);
+
+        $result = $this->repository->getActiveByRole('editor');
+
+        $this->assertEquals(1, $result->total());
+        $this->assertEquals($user->id, $result->first()->id);
+    }
+
+    public function test_create_with_roles()
+    {
+        $role = Role::factory()->create();
+        $userData = [
+            'name' => 'Test User',
+            'email' => 'test@example.com',
+            'password' => 'password123'
+        ];
+
+        $user = $this->repository->createWithRoles($userData, [$role->id]);
+
+        $this->assertDatabaseHas('users', ['email' => 'test@example.com']);
+        $this->assertTrue($user->roles->contains($role->id));
+        $this->assertTrue(Hash::check('password123', $user->password));
+    }
+
+    public function test_update_with_roles()
+    {
+        $user = User::factory()->create();
+        $role = Role::factory()->create();
+        $newRole = Role::factory()->create();
+
+        $user->roles()->attach($role->id);
+
+        $updateData = [
+            'name' => 'Updated Name',
+            'email' => 'updated@example.com'
+        ];
+
+        $result = $this->repository->updateWithRoles($user->id, $updateData, [$newRole->id]);
+
+        $this->assertTrue($result);
+        $this->assertEquals('Updated Name', $user->fresh()->name);
+        $this->assertTrue($user->fresh()->roles->contains($newRole->id));
+        $this->assertFalse($user->fresh()->roles->contains($role->id));
+    }
+
+    public function test_get_user_stats()
+    {
+        $user = User::factory()->create();
+        
+        // Create test content
+        $user->content()->createMany([
+            ['status' => 'published', 'title' => 'Test 1'],
+            ['status' => 'published', 'title' => 'Test 2'],
+            ['status' => 'draft', 'title' => 'Test 3']
+        ]);
+
+        $stats = $this->repository->getUserStats($user->id);
+
+        $this->assertEquals(3, $stats['content_count']);
+        $this->assertEquals(2, $stats['published_content']);
+    }
+
+    public function test_get_by_department()
+    {
+        $department = Department::factory()->create();
+        User::factory()->count(2)->create(['department_id' => $department->id, 'status' => 'active']);
+        User::factory()->create(['department_id' => $department->id, 'status' => 'inactive']);
+
+        $result = $this->repository->getByDepartment($department->id);
+
+        $this->assertEquals(2, $result->total());
+    }
+
+    public function test_update_status()
+    {
+        $user = User::factory()->create(['status' => 'active']);
+
+        $result = $this->repository->updateStatus($user->id, 'inactive', 'Test reason');
+
+        $this->assertTrue($result);
+        $this->assertEquals('inactive', $user->fresh()->status);
+        $this->assertEquals('Test reason', $user->fresh()->status_change_reason);
+        $this->assertNotNull($user->fresh()->status_changed_at);
+    }
+
+    public function test_get_users_with_permissions()
+    {
+        $permission = Permission::factory()->create(['name' => 'edit_content']);
+        $role = Role::factory()->create();
+        $role->permissions()->attach($permission->id);
+        
+        $user = User::factory()->create(['status' => 'active']);
+        $user->roles()->attach($role->id);
+
+        $result = $this->repository->getUsersWithPermissions(['edit_content']);
+
+        $this->assertEquals(1, $result->count());
+        $this->assertEquals($user->id, $result->first()->id);
+    }
+
+    public function test_advanced_search()
+    {
+        $user = User::factory()->create([
+            'name' => 'Test User',
+            'email' => 'test@example.com',
+            'status' => 'active'
+        ]);
+
+        $filters = [
+            'search' => 'Test',
+            'status' => 'active'
+        ];
+
+        $result = $this->repository->advance

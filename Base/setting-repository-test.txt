@@ -1,0 +1,194 @@
+<?php
+
+namespace Tests\Unit\Repositories;
+
+use Tests\TestCase;
+use App\Models\Setting;
+use App\Repositories\SettingRepository;
+use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Cache;
+
+class SettingRepositoryTest extends TestCase
+{
+    use RefreshDatabase;
+
+    private SettingRepository $repository;
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+        $this->repository = new SettingRepository(new Setting());
+    }
+
+    public function test_get_by_group()
+    {
+        Setting::factory()->create([
+            'key' => 'site_name',
+            'value' => 'Test Site',
+            'group' => 'general'
+        ]);
+
+        Setting::factory()->create([
+            'key' => 'site_description',
+            'value' => 'Test Description',
+            'group' => 'general'
+        ]);
+
+        $settings = $this->repository->getByGroup('general');
+
+        $this->assertEquals(2, $settings->count());
+        $this->assertEquals('Test Site', $settings->get('site_name')->value);
+    }
+
+    public function test_get_value()
+    {
+        Setting::factory()->create([
+            'key' => 'boolean_setting',
+            'value' => '1',
+            'type' => 'boolean'
+        ]);
+
+        Setting::factory()->create([
+            'key' => 'json_setting',
+            'value' => '{"key":"value"}',
+            'type' => 'json'
+        ]);
+
+        $this->assertTrue($this->repository->getValue('boolean_setting'));
+        $this->assertEquals(['key' => 'value'], $this->repository->getValue('json_setting'));
+        $this->assertEquals('default', $this->repository->getValue('nonexistent', 'default'));
+    }
+
+    public function test_set_value()
+    {
+        $setting = Setting::factory()->create([
+            'key' => 'test_setting',
+            'value' => 'old_value',
+            'type' => 'string'
+        ]);
+
+        $result = $this->repository->setValue('test_setting', 'new_value');
+
+        $this->assertTrue($result);
+        $this->assertEquals('new_value', $setting->fresh()->value);
+    }
+
+    public function test_bulk_update()
+    {
+        Setting::factory()->create([
+            'key' => 'setting1',
+            'value' => 'old1'
+        ]);
+
+        Setting::factory()->create([
+            'key' => 'setting2',
+            'value' => 'old2'
+        ]);
+
+        $result = $this->repository->bulkUpdate([
+            'setting1' => 'new1',
+            'setting2' => 'new2'
+        ]);
+
+        $this->assertTrue($result);
+        $this->assertEquals('new1', Setting::where('key', 'setting1')->first()->value);
+        $this->assertEquals('new2', Setting::where('key', 'setting2')->first()->value);
+    }
+
+    public function test_create_setting()
+    {
+        $data = [
+            'key' => 'new_setting',
+            'value' => 'test_value',
+            'type' => 'string',
+            'group' => 'test',
+            'description' => 'Test setting'
+        ];
+
+        $setting = $this->repository->createSetting($data);
+
+        $this->assertDatabaseHas('settings', [
+            'key' => 'new_setting',
+            'value' => 'test_value'
+        ]);
+    }
+
+    public function test_delete_setting()
+    {
+        $setting = Setting::factory()->create([
+            'key' => 'delete_me'
+        ]);
+
+        $result = $this->repository->deleteSetting('delete_me');
+
+        $this->assertTrue($result);
+        $this->assertDatabaseMissing('settings', ['key' => 'delete_me']);
+    }
+
+    public function test_get_for_export()
+    {
+        Setting::factory()->create([
+            'key' => 'export1',
+            'value' => 'value1',
+            'group' => 'group1'
+        ]);
+
+        Setting::factory()->create([
+            'key' => 'export2',
+            'value' => 'value2',
+            'group' => 'group2'
+        ]);
+
+        $exported = $this->repository->getForExport(['group1']);
+
+        $this->assertEquals(1, $exported->count());
+        $this->assertEquals('export1', $exported->first()['key']);
+    }
+
+    public function test_import_settings()
+    {
+        $settings = [
+            [
+                'key' => 'import1',
+                'value' => 'value1',
+                'type' => 'string',
+                'group' => 'test'
+            ],
+            [
+                'key' => 'import2',
+                'value' => 'value2',
+                'type' => 'string',
+                'group' => 'test'
+            ]
+        ];
+
+        $result = $this->repository->import($settings);
+
+        $this->assertTrue($result);
+        $this->assertDatabaseHas('settings', [
+            'key' => 'import1',
+            'value' => 'value1'
+        ]);
+        $this->assertDatabaseHas('settings', [
+            'key' => 'import2',
+            'value' => 'value2'
+        ]);
+    }
+
+    public function test_import_with_overwrite()
+    {
+        Setting::factory()->create([
+            'key' => 'existing',
+            'value' => 'old_value',
+            'type' => 'string',
+            'group' => 'test'
+        ]);
+
+        $settings = [
+            [
+                'key' => 'existing',
+                'value' => 'new_value',
+                'type' => 'string',
+                'group' => 'test'
+            ]
+        

@@ -1,0 +1,135 @@
+<?php
+
+namespace App\Services;
+
+use App\Core\Services\BaseService;
+use App\Core\Templates\TemplateManager;
+use App\Core\Security\SecurityManager;
+use App\Core\Cache\CacheManager;
+use App\Core\Events\EventDispatcher;
+
+class TemplateService extends BaseService
+{
+    protected TemplateManager $templateManager;
+    protected CacheManager $cache;
+
+    public function __construct(
+        TemplateManager $templateManager,
+        SecurityManager $security,
+        CacheManager $cache,
+        EventDispatcher $events
+    ) {
+        parent::__construct($security, $events);
+        $this->templateManager = $templateManager;
+        $this->cache = $cache;
+    }
+
+    public function render(string $template, array $data = []): string
+    {
+        return $this->executeOperation('template.render', function() use ($template, $data) {
+            return $this->templateManager->render($template, $this->prepareData($data));
+        });
+    }
+
+    public function compile(string $template, array $data = []): string
+    {
+        return $this->executeOperation('template.compile', function() use ($template, $data) {
+            return $this->templateManager->compile($template, $this->prepareData($data));
+        });
+    }
+
+    public function extend(string $name, callable $extension): void
+    {
+        $this->executeOperation('template.extend', function() use ($name, $extension) {
+            $this->templateManager->extend($name, $extension);
+        });
+    }
+
+    public function addGlobal(string $key, $value): void
+    {
+        $this->executeOperation('template.global', function() use ($key, $value) {
+            $this->templateManager->addGlobal($key, $value);
+        });
+    }
+
+    public function clearCache(string $template = null): void
+    {
+        $this->executeOperation('template.cache_clear', function() use ($template) {
+            $this->templateManager->clearCache($template);
+        });
+    }
+
+    public function validateSyntax(string $template): bool
+    {
+        return $this->executeOperation('template.validate', function() use ($template) {
+            return $this->templateManager->validateSyntax($template);
+        });
+    }
+
+    protected function prepareData(array $data): array
+    {
+        foreach ($data as $key => $value) {
+            if ($value instanceof \Closure) {
+                $data[$key] = $this->security->wrapCallback($value);
+            }
+        }
+
+        return array_merge($this->getDefaultData(), $data);
+    }
+
+    protected function getDefaultData(): array
+    {
+        return [
+            'csrf_token' => csrf_token(),
+            'current_user' => auth()->user(),
+            'current_time' => now(),
+            'config' => config('templates.public')
+        ];
+    }
+
+    protected function validateOperation(string $operation): void
+    {
+        parent::validateOperation($operation);
+
+        switch ($operation) {
+            case 'template.render':
+                $this->validateRenderQuota();
+                break;
+            
+            case 'template.compile':
+                $this->validateCompilePermissions();
+                break;
+            
+            case 'template.extend':
+                $this->validateExtensionSafety();
+                break;
+        }
+    }
+
+    private function validateRenderQuota(): void
+    {
+        $key = 'template_renders:' . date('Y-m-d');
+        $renders = (int)$this->cache->get($key, 0);
+        $maxRenders = config('templates.max_daily_renders', 10000);
+
+        if ($renders >= $maxRenders) {
+            throw new TemplateException('Daily render quota exceeded');
+        }
+
+        $this->cache->increment($key);
+    }
+
+    private function validateCompilePermissions(): void
+    {
+        if (!auth()->user()->hasPermission('templates.compile')) {
+            throw new SecurityException('Insufficient permissions for template compilation');
+        }
+    }
+
+    private function validateExtensionSafety(): void
+    {
+        if (!app()->environment('local', 'testing')) {
+            throw new SecurityException('Template extensions only allowed in development');
+        }
+    }
+}

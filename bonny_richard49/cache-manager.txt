@@ -1,0 +1,186 @@
+<?php
+
+namespace App\Core\Cache;
+
+class CacheManager implements CacheInterface
+{
+    private $store;
+    private ValidationService $validator;
+    private SecurityManager $security;
+
+    public function getContent(int $id): ?array
+    {
+        $key = $this->getContentKey($id);
+        $cached = $this->get($key);
+
+        if ($cached && $this->validateCachedContent($cached)) {
+            return $cached;
+        }
+
+        return null;
+    }
+
+    public function storeContent(array $content): void
+    {
+        $key = $this->getContentKey($content['id']);
+        $this->set($key, $content, $this->getContentTTL());
+    }
+
+    public function updateContent(array $content): void
+    {
+        $this->storeContent($content);
+        $this->clearRelatedKeys($content['id']);
+    }
+
+    public function removeContent(int $id): void
+    {
+        $key = $this->getContentKey($id);
+        $this->delete($key);
+        $this->clearRelatedKeys($id);
+    }
+
+    public function getVersion(string $versionId): ?array
+    {
+        $key = $this->getVersionKey($versionId);
+        $cached = $this->get($key);
+
+        if ($cached && $this->validateCachedVersion($cached)) {
+            return $cached;
+        }
+
+        return null;
+    }
+
+    public function storeVersion(string $versionId, array $data): void
+    {
+        $key = $this->getVersionKey($versionId);
+        $this->set($key, $data, $this->getVersionTTL());
+    }
+
+    public function removeContentVersions(int $contentId): void
+    {
+        $pattern = $this->getContentVersionPattern($contentId);
+        $this->deletePattern($pattern);
+    }
+
+    private function get(string $key)
+    {
+        try {
+            $value = $this->store->get($key);
+            return $value ? json_decode($value, true) : null;
+        } catch (\Exception $e) {
+            $this->handleCacheError($e);
+            return null;
+        }
+    }
+
+    private function set(string $key, $value, int $ttl): void
+    {
+        try {
+            $this->store->set(
+                $key,
+                json_encode($value),
+                $ttl
+            );
+        } catch (\Exception $e) {
+            $this->handleCacheError($e);
+        }
+    }
+
+    private function delete(string $key): void
+    {
+        try {
+            $this->store->delete($key);
+        } catch (\Exception $e) {
+            $this->handleCacheError($e);
+        }
+    }
+
+    private function deletePattern(string $pattern): void
+    {
+        try {
+            $this->store->deletePattern($pattern);
+        } catch (\Exception $e) {
+            $this->handleCacheError($e);
+        }
+    }
+
+    private function validateCachedContent(array $content): bool
+    {
+        return $this->validator->validateContent($content) &&
+               $this->security->validateCachedData($content);
+    }
+
+    private function validateCachedVersion(array $version): bool
+    {
+        return $this->validator->validateVersion($version) &&
+               $this->security->validateCachedData($version);
+    }
+
+    private function getContentKey(int $id): string
+    {
+        return "content.$id";
+    }
+
+    private function getVersionKey(string $versionId): string
+    {
+        return "version.$versionId";
+    }
+
+    private function getContentVersionPattern(int $contentId): string
+    {
+        return "version.*.content.$contentId.*";
+    }
+
+    private function clearRelatedKeys(int $contentId): void
+    {
+        $patterns = [
+            "content.$contentId.*",
+            "list.*content.$contentId.*",
+            $this->getContentVersionPattern($contentId)
+        ];
+
+        foreach ($patterns as $pattern) {
+            $this->deletePattern($pattern);
+        }
+    }
+
+    private function getContentTTL(): int
+    {
+        return 3600; // 1 hour
+    }
+
+    private function getVersionTTL(): int
+    {
+        return 86400; // 24 hours
+    }
+
+    private function handleCacheError(\Exception $e): void
+    {
+        // Log error
+        error_log("Cache error: {$e->getMessage()}");
+
+        // Clear problematic cache if needed
+        if ($this->shouldClearCache($e)) {
+            $this->clearCache();
+        }
+    }
+
+    private function shouldClearCache(\Exception $e): bool
+    {
+        return $e instanceof CacheCorruptionException;
+    }
+
+    private function clearCache(): void
+    {
+        try {
+            $this->store->clear();
+        } catch (\Exception $e) {
+            error_log("Failed to clear cache: {$e->getMessage()}");
+        }
+    }
+}
+
+interface CacheInterface
+{
+    public function getContent(int $id): ?array;

@@ -1,0 +1,129 @@
+<?php
+
+namespace App\Observers;
+
+use App\Models\Content;
+use App\Core\Events\EventDispatcher;
+use App\Core\Security\SecurityManager;
+use App\Core\Cache\CacheManager;
+use App\Core\Logging\AuditLogger;
+
+class ContentObserver
+{
+    private EventDispatcher $events;
+    private SecurityManager $security;
+    private CacheManager $cache;
+    private AuditLogger $auditLogger;
+
+    public function __construct(
+        EventDispatcher $events,
+        SecurityManager $security,
+        CacheManager $cache,
+        AuditLogger $auditLogger
+    ) {
+        $this->events = $events;
+        $this->security = $security;
+        $this->cache = $cache;
+        $this->auditLogger = $auditLogger;
+    }
+
+    public function creating(Content $content): void
+    {
+        $this->security->validateOperation('content.creating');
+        $this->events->dispatch('content.creating', $content);
+    }
+
+    public function created(Content $content): void
+    {
+        $this->clearContentCache();
+        $this->auditLogger->logModelEvent('content.created', $content);
+        $this->events->dispatch('content.created', $content);
+    }
+
+    public function updating(Content $content): void
+    {
+        $this->security->validateOperation('content.updating');
+        
+        if ($content->isDirty('status') && $content->status === 'published') {
+            $this->validatePublishingRequirements($content);
+        }
+
+        $this->events->dispatch('content.updating', $content);
+    }
+
+    public function updated(Content $content): void
+    {
+        $this->clearContentCache();
+        $this->auditLogger->logModelEvent('content.updated', $content);
+        $this->events->dispatch('content.updated', $content);
+
+        if ($content->wasChanged('status')) {
+            $this->handleStatusChange($content);
+        }
+    }
+
+    public function deleting(Content $content): void
+    {
+        $this->security->validateOperation('content.deleting');
+        $this->events->dispatch('content.deleting', $content);
+    }
+
+    public function deleted(Content $content): void
+    {
+        $this->clearContentCache();
+        $this->auditLogger->logModelEvent('content.deleted', $content);
+        $this->events->dispatch('content.deleted', $content);
+    }
+
+    public function restored(Content $content): void
+    {
+        $this->clearContentCache();
+        $this->auditLogger->logModelEvent('content.restored', $content);
+        $this->events->dispatch('content.restored', $content);
+    }
+
+    private function clearContentCache(): void
+    {
+        $this->cache->tags(['content'])->flush();
+    }
+
+    private function validatePublishingRequirements(Content $content): void
+    {
+        if (!$content->isReadyForPublishing()) {
+            throw new ContentPublishingException('Content not ready for publishing');
+        }
+    }
+
+    private function handleStatusChange(Content $content): void
+    {
+        $oldStatus = $content->getOriginal('status');
+        $newStatus = $content->status;
+
+        $this->auditLogger->logModelEvent('content.status_changed', [
+            'content' => $content,
+            'old_status' => $oldStatus,
+            'new_status' => $newStatus
+        ]);
+
+        $this->events->dispatch('content.status_changed', [
+            'content' => $content,
+            'old_status' => $oldStatus,
+            'new_status' => $newStatus
+        ]);
+
+        if ($newStatus === 'published') {
+            $this->handlePublishing($content);
+        }
+    }
+
+    private function handlePublishing(Content $content): void
+    {
+        $this->events->dispatch('content.published', $content);
+        
+        if ($content->shouldNotifySubscribers()) {
+            $this->events->dispatch('content.notify_subscribers', $content);
+        }
+
+        $this->cache->tags(['content', 'published'])->flush();
+    }
+}

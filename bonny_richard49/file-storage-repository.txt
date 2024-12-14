@@ -1,0 +1,324 @@
+<?php
+
+namespace App\Core\FileStorage\Repository;
+
+use App\Core\FileStorage\Models\File;
+use App\Core\FileStorage\DTO\FileData;
+use App\Core\FileStorage\Events\FileUploaded;
+use App\Core\FileStorage\Events\FileDeleted;
+use App\Core\FileStorage\Events\FileMoved;
+use App\Core\FileStorage\Services\FileProcessor;
+use App\Core\FileStorage\Services\ThumbnailGenerator;
+use App\Core\FileStorage\Exceptions\FileStorageException;
+use App\Core\Shared\Repository\BaseRepository;
+use App\Core\Shared\Cache\CacheManagerInterface;
+use Illuminate\Database\Eloquent\Collection;
+use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Event;
+use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Str;
+
+class FileStorageRepository extends BaseRepository implements FileStorageRepositoryInterface
+{
+    protected const CACHE_KEY = 'files';
+    protected const CACHE_TTL = 3600; // 1 hour
+
+    protected FileProcessor $processor;
+    protected ThumbnailGenerator $thumbnailGenerator;
+    protected string $disk;
+
+    public function __construct(
+        CacheManagerInterface $cache,
+        FileProcessor $processor,
+        ThumbnailGenerator $thumbnailGenerator
+    ) {
+        parent::__construct($cache);
+        $this->processor = $processor;
+        $this->thumbnailGenerator = $thumbnailGenerator;
+        $this->disk = config('filesystems.default');
+        $this->setCacheKey(self::CACHE_KEY);
+        $this->setCacheTtl(self::CACHE_TTL);
+    }
+
+    protected function getModelClass(): string
+    {
+        return File::class;
+    }
+
+    public function store(UploadedFile $file, array $attributes = []): File
+    {
+        DB::beginTransaction();
+        try {
+            // Process file
+            $processedFile = $this->processor->process($file);
+
+            // Store file
+            $path = Storage::disk($this->disk)->putFile(
+                $attributes['directory'] ?? 'uploads',
+                $processedFile
+            );
+
+            // Create file record
+            $fileModel = $this->model->create([
+                'name' => $attributes['name'] ?? $file->getClientOriginalName(),
+                'path' => $path,
+                'disk' => $this->disk,
+                'mime_type' => $file->getMimeType(),
+                'size' => $file->getSize(),
+                'extension' => $file->getClientOriginalExtension(),
+                'directory' => $attributes['directory'] ?? 'uploads',
+                'metadata' => array_merge(
+                    $this->processor->extractMetadata($file),
+                    $attributes['metadata'] ?? []
+                ),
+            ]);
+
+            // Generate thumbnails if it's an image
+            if ($this->isImage($fileModel)) {
+                $thumbnails = $this->generateThumbnails(
+                    $fileModel->id,
+                    $attributes['thumbnail_sizes'] ?? config('filesystems.thumbnail_sizes', [])
+                );
+                $fileModel->update(['thumbnails' => $thumbnails]);
+            }
+
+            // Clear cache
+            $this->clearCache();
+
+            // Dispatch event
+            Event::dispatch(new FileUploaded($fileModel));
+
+            DB::commit();
+            return $fileModel->fresh();
+        } catch (\Exception $e) {
+            DB::rollBack();
+            throw new FileStorageException("Failed to store file: {$e->getMessage()}", 0, $e);
+        }
+    }
+
+    public function storeFromUrl(string $url, array $attributes = []): File
+    {
+        $tempFile = tempnam(sys_get_temp_dir(), 'download_');
+        $contents = file_get_contents($url);
+        file_put_contents($tempFile, $contents);
+
+        $file = new UploadedFile(
+            $tempFile,
+            basename($url),
+            mime_content_type($tempFile),
+            null,
+            true
+        );
+
+        try {
+            return $this->store($file, $attributes);
+        } finally {
+            @unlink($tempFile);
+        }
+    }
+
+    public function getByDirectory(string $directory): Collection
+    {
+        return $this->cache->remember(
+            $this->getCacheKey("directory:{$directory}"),
+            fn() => $this->model->where('directory', $directory)
+                               ->orderBy('created_at', 'desc')
+                               ->get()
+        );
+    }
+
+    public function moveToDirectory(int $fileId, string $directory): File
+    {
+        DB::beginTransaction();
+        try {
+            $file = $this->findOrFail($fileId);
+            $oldDirectory = $file->directory;
+
+            // Move file
+            $newPath = str_replace($oldDirectory, $directory, $file->path);
+            Storage::disk($file->disk)->move($file->path, $newPath);
+
+            // Move thumbnails if they exist
+            if (!empty($file->thumbnails)) {
+                foreach ($file->thumbnails as &$thumbnail) {
+                    $newThumbPath = str_replace($oldDirectory, $directory, $thumbnail['path']);
+                    Storage::disk($file->disk)->move($thumbnail['path'], $newThumbPath);
+                    $thumbnail['path'] = $newThumbPath;
+                }
+            }
+
+            // Update file record
+            $file->update([
+                'path' => $newPath,
+                'directory' => $directory,
+                'thumbnails' => $file->thumbnails
+            ]);
+
+            // Clear cache
+            $this->clearCache();
+
+            // Dispatch event
+            Event::dispatch(new FileMoved($file, $oldDirectory));
+
+            DB::commit();
+            return $file->fresh();
+        } catch (\Exception $e) {
+            DB::rollBack();
+            throw new FileStorageException("Failed to move file: {$e->getMessage()}", 0, $e);
+        }
+    }
+
+    public function getByMimeType(string $mimeType): Collection
+    {
+        return $this->cache->remember(
+            $this->getCacheKey("mime:{$mimeType}"),
+            fn() => $this->model->where('mime_type', 'LIKE', $mimeType . '%')
+                               ->orderBy('created_at', 'desc')
+                               ->get()
+        );
+    }
+
+    public function getUrl(int $fileId, int $expiresIn = 3600): string
+    {
+        $file = $this->findOrFail($fileId);
+        return Storage::disk($file->disk)->temporaryUrl($file->path, now()->addSeconds($expiresIn));
+    }
+
+    public function generateThumbnails(int $fileId, array $sizes): array
+    {
+        $file = $this->findOrFail($fileId);
+        
+        if (!$this->isImage($file)) {
+            return [];
+        }
+
+        try {
+            return $this->thumbnailGenerator->generate(
+                Storage::disk($file->disk)->path($file->path),
+                $file->directory,
+                $sizes
+            );
+        } catch (\Exception $e) {
+            throw new FileStorageException("Failed to generate thumbnails: {$e->getMessage()}", 0, $e);
+        }
+    }
+
+    public function getMetadata(int $fileId): array
+    {
+        $file = $this->findOrFail($fileId);
+        return array_merge(
+            $file->metadata ?? [],
+            [
+                'size' => $file->size,
+                'mime_type' => $file->mime_type,
+                'extension' => $file->extension,
+                'created_at' => $file->created_at,
+                'updated_at' => $file->updated_at,
+            ]
+        );
+    }
+
+    public function updateAttributes(int $fileId, array $attributes): File
+    {
+        DB::beginTransaction();
+        try {
+            $file = $this->findOrFail($fileId);
+            
+            $file->update([
+                'name' => $attributes['name'] ?? $file->name,
+                'metadata' => array_merge($file->metadata ?? [], $attributes['metadata'] ?? []),
+            ]);
+
+            // Clear cache
+            $this->clearCache();
+
+            DB::commit();
+            return $file->fresh();
+        } catch (\Exception $e) {
+            DB::rollBack();
+            throw new FileStorageException("Failed to update file attributes: {$e->getMessage()}", 0, $e);
+        }
+    }
+
+    public function getUsageInfo(int $fileId): array
+    {
+        return $this->cache->remember(
+            $this->getCacheKey("usage:{$fileId}"),
+            fn() => [
+                'total_usage' => $this->model->find($fileId)->usages()->count(),
+                'by_model' => $this->model->find($fileId)->usages()
+                    ->select('model_type', DB::raw('count(*) as count'))
+                    ->groupBy('model_type')
+                    ->pluck('count', 'model_type')
+                    ->toArray(),
+                'last_used' => $this->model->find($fileId)->usages()
+                    ->latest()
+                    ->first()?->created_at,
+            ]
+        );
+    }
+
+    public function search(string $query, array $filters = []): Collection
+    {
+        $searchQuery = $this->model->where(function($q) use ($query) {
+            $q->where('name', 'LIKE', "%{$query}%")
+              ->orWhere('mime_type', 'LIKE', "%{$query}%");
+        });
+
+        if (isset($filters['directory'])) {
+            $searchQuery->where('directory', $filters['directory']);
+        }
+
+        if (isset($filters['mime_type'])) {
+            $searchQuery->where('mime_type', 'LIKE', $filters['mime_type'] . '%');
+        }
+
+        if (isset($filters['from_date'])) {
+            $searchQuery->where('created_at', '>=', $filters['from_date']);
+        }
+
+        if (isset($filters['to_date'])) {
+            $searchQuery->where('created_at', '<=', $filters['to_date']);
+        }
+
+        return $searchQuery->orderBy('created_at', 'desc')->get();
+    }
+
+    public function cleanUnused(int $olderThanDays): int
+    {
+        $date = now()->subDays($olderThanDays);
+        $files = $this->model->where('created_at', '<', $date)
+                            ->whereDoesntHave('usages')
+                            ->get();
+
+        $count = 0;
+        foreach ($files as $file) {
+            if ($this->delete($file->id)) {
+                $count++;
+            }
+        }
+
+        return $count;
+    }
+
+    public function duplicate(int $fileId, array $attributes = []): File
+    {
+        DB::beginTransaction();
+        try {
+            $originalFile = $this->findOrFail($fileId);
+            
+            // Copy file
+            $newPath = $this->generateUniquePath($originalFile);
+            Storage::disk($originalFile->disk)->copy($originalFile->path, $newPath);
+
+            // Create new file record
+            $newFile = $this->model->create([
+                'name' => $attributes['name'] ?? $this->generateDuplicateName($originalFile->name),
+                'path' => $newPath,
+                'disk' => $originalFile->disk,
+                'mime_type' => $originalFile->mime_type,
+                'size' => $originalFile->size,
+                'extension' => $originalFile->extension,
+                'directory' => $attributes['directory'] ?? $originalFile->directory,
+                'metadata' => array_merge

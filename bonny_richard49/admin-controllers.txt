@@ -1,0 +1,153 @@
+// app/Core/Widget/Controllers/Admin/WidgetController.php
+<?php
+
+namespace App\Core\Widget\Controllers\Admin;
+
+use App\Core\Widget\Services\WidgetService;
+use App\Core\Widget\Requests\CreateWidgetRequest;
+use App\Core\Widget\Requests\UpdateWidgetRequest;
+use App\Http\Controllers\Controller;
+use Illuminate\View\View;
+use Illuminate\Http\RedirectResponse;
+
+class WidgetController extends Controller
+{
+    public function __construct(private WidgetService $widgetService)
+    {
+    }
+
+    public function index(): View
+    {
+        $widgets = $this->widgetService->getAllWidgets();
+        return view('admin.widgets.index', compact('widgets'));
+    }
+
+    public function create(): View
+    {
+        return view('admin.widgets.create');
+    }
+
+    public function store(CreateWidgetRequest $request): RedirectResponse
+    {
+        $widget = $this->widgetService->createWidget($request->validated());
+        return redirect()
+            ->route('admin.widgets.index')
+            ->with('success', 'Widget created successfully.');
+    }
+
+    public function edit(int $id): View
+    {
+        $widget = $this->widgetService->getWidget($id);
+        return view('admin.widgets.edit', compact('widget'));
+    }
+
+    public function update(UpdateWidgetRequest $request, int $id): RedirectResponse
+    {
+        $this->widgetService->updateWidget($id, $request->validated());
+        return redirect()
+            ->route('admin.widgets.index')
+            ->with('success', 'Widget updated successfully.');
+    }
+
+    public function destroy(int $id): RedirectResponse
+    {
+        $this->widgetService->deleteWidget($id);
+        return redirect()
+            ->route('admin.widgets.index')
+            ->with('success', 'Widget deleted successfully.');
+    }
+}
+
+// app/Core/Widget/Controllers/Admin/WidgetAreaController.php
+<?php
+
+namespace App\Core\Widget\Controllers\Admin;
+
+use App\Core\Widget\Services\WidgetService;
+use App\Core\Widget\Requests\UpdateWidgetOrderRequest;
+use App\Http\Controllers\Controller;
+use Illuminate\View\View;
+use Illuminate\Http\JsonResponse;
+
+class WidgetAreaController extends Controller
+{
+    public function __construct(private WidgetService $widgetService)
+    {
+    }
+
+    public function show(string $area): View
+    {
+        $widgets = $this->widgetService->getWidgetsByArea($area);
+        return view('admin.widget-areas.show', compact('widgets', 'area'));
+    }
+
+    public function updateOrder(UpdateWidgetOrderRequest $request): JsonResponse
+    {
+        $this->widgetService->updateWidgetOrder($request->validated());
+        return response()->json(['message' => 'Widget order updated successfully']);
+    }
+}
+
+// app/Core/Widget/Controllers/Admin/WidgetSettingsController.php
+<?php
+
+namespace App\Core\Widget\Controllers\Admin;
+
+use App\Core\Widget\Services\WidgetService;
+use App\Core\Widget\Requests\UpdateWidgetSettingsRequest;
+use App\Http\Controllers\Controller;
+use Illuminate\View\View;
+use Illuminate\Http\RedirectResponse;
+
+class WidgetSettingsController extends Controller
+{
+    public function __construct(private WidgetService $widgetService)
+    {
+    }
+
+    public function edit(int $id): View
+    {
+        $widget = $this->widgetService->getWidget($id);
+        return view('admin.widgets.settings', compact('widget'));
+    }
+
+    public function update(UpdateWidgetSettingsRequest $request, int $id): RedirectResponse
+    {
+        $this->widgetService->updateWidgetSettings($id, $request->validated());
+        return redirect()
+            ->route('admin.widgets.index')
+            ->with('success', 'Widget settings updated successfully.');
+    }
+}
+
+// app/Core/Widget/Controllers/Admin/WidgetVisibilityController.php
+<?php
+
+namespace App\Core\Widget\Controllers\Admin;
+
+use App\Core\Widget\Services\WidgetService;
+use App\Core\Widget\Requests\UpdateWidgetVisibilityRequest;
+use App\Http\Controllers\Controller;
+use Illuminate\View\View;
+use Illuminate\Http\RedirectResponse;
+
+class WidgetVisibilityController extends Controller
+{
+    public function __construct(private WidgetService $widgetService)
+    {
+    }
+
+    public function edit(int $id): View
+    {
+        $widget = $this->widgetService->getWidget($id);
+        return view('admin.widgets.visibility', compact('widget'));
+    }
+
+    public function update(UpdateWidgetVisibilityRequest $request, int $id): RedirectResponse
+    {
+        $this->widgetService->updateWidgetVisibility($id, $request->validated());
+        return redirect()
+            ->route('admin.widgets.index')
+            ->with('success', 'Widget visibility rules updated successfully.');
+    }
+}

@@ -1,0 +1,112 @@
+<?php
+
+namespace App\Http\Controllers;
+
+use App\Core\Categories\CategoryManager;
+use App\Core\Security\SecurityManager;
+use App\Core\Performance\PerformanceMonitor;
+use App\Http\Requests\CategoryRequest;
+use Illuminate\Http\JsonResponse;
+
+class CategoryController extends Controller
+{
+    private CategoryManager $categories;
+    private SecurityManager $security;
+    private PerformanceMonitor $monitor;
+
+    public function __construct(
+        CategoryManager $categories,
+        SecurityManager $security,
+        PerformanceMonitor $monitor
+    ) {
+        $this->categories = $categories;
+        $this->security = $security;
+        $this->monitor = $monitor;
+    }
+
+    public function index(): JsonResponse
+    {
+        $monitoringId = $this->monitor->startOperation('category.list');
+        
+        try {
+            $this->security->validateOperation('category.list');
+            
+            $hierarchy = $this->categories->getHierarchy();
+            
+            $metrics = $this->monitor->endOperation($monitoringId);
+            
+            return response()->json([
+                'status' => 'success',
+                'data' => $hierarchy,
+                'metrics' => $metrics
+            ]);
+            
+        } catch (\Exception $e) {
+            $this->monitor->endOperation($monitoringId);
+            throw $e;
+        }
+    }
+
+    public function store(CategoryRequest $request): JsonResponse
+    {
+        $monitoringId = $this->monitor->startOperation('category.create');
+        
+        try {
+            $this->security->validateOperation('category.create');
+            
+            $category = $this->categories->create(
+                $request->validated()
+            );
+            
+            $metrics = $this->monitor->endOperation($monitoringId);
+            
+            return response()->json([
+                'status' => 'success',
+                'data' => $category,
+                'metrics' => $metrics
+            ], 201);
+            
+        } catch (\Exception $e) {
+            $this->monitor->endOperation($monitoringId);
+            throw $e;
+        }
+    }
+
+    public function update(CategoryRequest $request, int $id): JsonResponse
+    {
+        $monitoringId = $this->monitor->startOperation('category.update');
+        
+        try {
+            $this->security->validateOperation('category.update');
+            
+            $category = $this->categories->update(
+                $id,
+                $request->validated()
+            );
+            
+            $metrics = $this->monitor->endOperation($monitoringId);
+            
+            return response()->json([
+                'status' => 'success',
+                'data' => $category,
+                'metrics' => $metrics
+            ]);
+            
+        } catch (\Exception $e) {
+            $this->monitor->endOperation($monitoringId);
+            throw $e;
+        }
+    }
+
+    public function destroy(int $id): JsonResponse
+    {
+        $monitoringId = $this->monitor->startOperation('category.delete');
+        
+        try {
+            $this->security->validateOperation('category.delete');
+            
+            $result = $this->categories->delete($id);
+            
+            $metrics = $this->monitor->endOperation($monitoringId);
+            
+            return response()->

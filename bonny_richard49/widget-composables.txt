@@ -1,0 +1,327 @@
+// app/Core/Widget/Composables/WidgetRenderer.php
+<?php
+
+namespace App\Core\Widget\Composables;
+
+use App\Core\Widget\Models\Widget;
+use App\Core\Widget\Services\WidgetService;
+use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\View;
+
+class WidgetRenderer
+{
+    protected Collection $widgets;
+    protected array $renderedWidgets = [];
+    protected array $areas = [];
+
+    public function __construct(protected WidgetService $widgetService)
+    {
+        $this->widgets = collect();
+    }
+
+    public function render(string $area): string
+    {
+        $widgets = $this->getWidgets($area);
+        return $this->renderWidgets($widgets);
+    }
+
+    public function renderWidget(Widget $widget): string
+    {
+        $cacheKey = "widget:{$widget->id}:rendered";
+        
+        return Cache::remember(
+            $cacheKey, 
+            $widget->cache_ttl ?? 3600,
+            fn() => $this->buildWidget($widget)
+        );
+    }
+
+    protected function getWidgets(string $area): Collection
+    {
+        if (!isset($this->areas[$area])) {
+            $this->areas[$area] = $this->widgetService->getWidgetsByArea($area);
+        }
+        
+        return $this->areas[$area];
+    }
+
+    protected function renderWidgets(Collection $widgets): string
+    {
+        return $widgets->map(function ($widget) {
+            if (!$widget->is_active) {
+                return '';
+            }
+
+            if (!$this->checkVisibility($widget)) {
+                return '';
+            }
+
+            return $this->renderWidget($widget);
+        })->implode('');
+    }
+
+    protected function buildWidget(Widget $widget): string
+    {
+        $viewPath = "widgets.{$widget->type}";
+
+        if (!View::exists($viewPath)) {
+            $viewPath = 'widgets.default';
+        }
+
+        return View::make($viewPath, [
+            'widget' => $widget,
+            'settings' => $widget->settings
+        ])->render();
+    }
+
+    protected function checkVisibility(Widget $widget): bool
+    {
+        if (empty($widget->visibility_rules)) {
+            return true;
+        }
+
+        $rules = collect($widget->visibility_rules);
+        $operator = $rules->get('operator', 'and');
+        $conditions = collect($rules->get('conditions', []));
+
+        if ($conditions->isEmpty()) {
+            return true;
+        }
+
+        $results = $conditions->map(function ($condition) {
+            return $this->evaluateCondition($condition);
+        });
+
+        return $operator === 'and' 
+            ? $results->every(fn($result) => $result)
+            : $results->contains(true);
+    }
+
+    protected function evaluateCondition(array $condition): bool
+    {
+        $type = $condition['type'] ?? '';
+        $value = $condition['value'] ?? '';
+
+        return match($type) {
+            'role' => auth()->check() && auth()->user()->hasRole($value),
+            'permission' => auth()->check() && auth()->user()->can($value),
+            'custom' => $this->evaluateCustomCondition($value),
+            default => false
+        };
+    }
+
+    protected function evaluateCustomCondition(string $condition): bool
+    {
+        $evaluator = app(WidgetRuleEvaluator::class);
+        return $evaluator->evaluate($condition);
+    }
+}
+
+// app/Core/Widget/Composables/WidgetAreaManager.php
+<?php
+
+namespace App\Core\Widget\Composables;
+
+use App\Core\Widget\Models\Widget;
+use App\Core\Widget\Services\WidgetService;
+use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\Cache;
+
+class WidgetAreaManager
+{
+    protected array $areas = [];
+
+    public function __construct(protected WidgetService $widgetService)
+    {
+    }
+
+    public function getArea(string $area): Collection
+    {
+        if (!isset($this->areas[$area])) {
+            $this->areas[$area] = Cache::tags(['widgets', "area:$area"])
+                ->remember(
+                    "widgets:area:$area",
+                    3600,
+                    fn() => $this->widgetService->getWidgetsByArea($area)
+                );
+        }
+
+        return $this->areas[$area];
+    }
+
+    public function hasWidgets(string $area): bool
+    {
+        return $this->getArea($area)->isNotEmpty();
+    }
+
+    public function getActiveWidgets(string $area): Collection
+    {
+        return $this->getArea($area)->filter->is_active;
+    }
+
+    public function reorderWidgets(string $area, array $order): void
+    {
+        $this->widgetService->updateWidgetOrder($order);
+        Cache::tags(['widgets', "area:$area"])->flush();
+        unset($this->areas[$area]);
+    }
+
+    public function addWidget(string $area, Widget $widget): void
+    {
+        $widget->area = $area;
+        $widget->order = $this->getNextOrder($area);
+        $widget->save();
+
+        Cache::tags(['widgets', "area:$area"])->flush();
+        unset($this->areas[$area]);
+    }
+
+    public function removeWidget(string $area, Widget $widget): void
+    {
+        $widget->delete();
+        Cache::tags(['widgets', "area:$area"])->flush();
+        unset($this->areas[$area]);
+    }
+
+    protected function getNextOrder(string $area): int
+    {
+        return $this->getArea($area)->max('order') + 1;
+    }
+}
+
+// app/Core/Widget/Composables/WidgetPermissionManager.php
+<?php
+
+namespace App\Core\Widget\Composables;
+
+use App\Core\Widget\Models\Widget;
+use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\Cache;
+
+class WidgetPermissionManager
+{
+    public function addPermission(Widget $widget, array $permission): void
+    {
+        $permissions = collect($widget->permissions);
+        $permissions->push($permission);
+        
+        $widget->permissions = $permissions->unique()->all();
+        $widget->save();
+
+        $this->clearPermissionCache($widget);
+    }
+
+    public function removePermission(Widget $widget, array $permission): void
+    {
+        $permissions = collect($widget->permissions);
+        
+        $widget->permissions = $permissions
+            ->reject(fn($p) => $p === $permission)
+            ->values()
+            ->all();
+            
+        $widget->save();
+
+        $this->clearPermissionCache($widget);
+    }
+
+    public function setPermissions(Widget $widget, array $permissions): void
+    {
+        $widget->permissions = $permissions;
+        $widget->save();
+
+        $this->clearPermissionCache($widget);
+    }
+
+    public function clearPermissions(Widget $widget): void
+    {
+        $widget->permissions = [];
+        $widget->save();
+
+        $this->clearPermissionCache($widget);
+    }
+
+    public function getPermissions(Widget $widget): Collection
+    {
+        return collect($widget->permissions);
+    }
+
+    protected function clearPermissionCache(Widget $widget): void
+    {
+        Cache::tags([
+            'widgets',
+            "widget:{$widget->id}",
+            'widget_permissions'
+        ])->flush();
+    }
+}
+
+// app/Core/Widget/Composables/WidgetSettingsManager.php
+<?php
+
+namespace App\Core\Widget\Composables;
+
+use App\Core\Widget\Models\Widget;
+use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\Cache;
+
+class WidgetSettingsManager
+{
+    public function getSetting(Widget $widget, string $key, $default = null)
+    {
+        return data_get($widget->settings, $key, $default);
+    }
+
+    public function setSetting(Widget $widget, string $key, $value): void
+    {
+        $settings = $widget->settings;
+        data_set($settings, $key, $value);
+        
+        $widget->settings = $settings;
+        $widget->save();
+
+        $this->clearSettingsCache($widget);
+    }
+
+    public function updateSettings(Widget $widget, array $settings): void
+    {
+        $widget->settings = array_merge($widget->settings ?? [], $settings);
+        $widget->save();
+
+        $this->clearSettingsCache($widget);
+    }
+
+    public function removeSetting(Widget $widget, string $key): void
+    {
+        $settings = $widget->settings;
+        data_forget($settings, $key);
+        
+        $widget->settings = $settings;
+        $widget->save();
+
+        $this->clearSettingsCache($widget);
+    }
+
+    public function clearSettings(Widget $widget): void
+    {
+        $widget->settings = [];
+        $widget->save();
+
+        $this->clearSettingsCache($widget);
+    }
+
+    public function getSettings(Widget $widget): Collection
+    {
+        return collect($widget->settings);
+    }
+
+    protected function clearSettingsCache(Widget $widget): void
+    {
+        Cache::tags([
+            'widgets',
+            "widget:{$widget->id}",
+            'widget_settings'
+        ])->flush();
+    }
+}

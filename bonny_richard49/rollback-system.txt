@@ -1,0 +1,147 @@
+<?php
+
+namespace App\Core\Deployment;
+
+final class RollbackManager
+{
+    private SecurityManager $security;
+    private BackupService $backup;
+    private ValidationService $validator;
+    private MonitoringService $monitor;
+    private AuditService $audit;
+
+    public function __construct(
+        SecurityManager $security,
+        BackupService $backup,
+        ValidationService $validator,
+        MonitoringService $monitor,
+        AuditService $audit
+    ) {
+        $this->security = $security;
+        $this->backup = $backup;
+        $this->validator = $validator;
+        $this->monitor = $monitor;
+        $this->audit = $audit;
+    }
+
+    public function rollback(string $deploymentId, RollbackContext $context): void
+    {
+        $rollbackId = $this->audit->startRollback($deploymentId, $context);
+        
+        try {
+            // Verify rollback possibility
+            $this->verifyRollbackPossible($deploymentId);
+            
+            // Get rollback point
+            $rollbackPoint = $this->backup->getRollbackPoint($deploymentId);
+            
+            // Start monitoring
+            $monitoringId = $this->monitor->startRollback();
+            
+            try {
+                // Execute rollback
+                $this->executeRollback($rollbackPoint);
+                
+                // Verify system state
+                $this->verifySystemState();
+                
+                // Record successful rollback
+                $this->audit->recordRollbackSuccess($rollbackId);
+                
+            } catch (\Throwable $e) {
+                // Handle rollback failure
+                $this->handleRollbackFailure($e, $rollbackPoint);
+                throw $e;
+            }
+            
+        } catch (\Throwable $e) {
+            // Record rollback failure
+            $this->audit->recordRollbackFailure($rollbackId, $e);
+            throw new RollbackException(
+                'Rollback failed: ' . $e->getMessage(),
+                previous: $e
+            );
+        }
+    }
+
+    private function verifyRollbackPossible(string $deploymentId): void
+    {
+        // Verify backup exists
+        if (!$this->backup->hasRollbackPoint($deploymentId)) {
+            throw new RollbackException('No rollback point found');
+        }
+
+        // Verify system state
+        if (!$this->monitor->canPerformRollback()) {
+            throw new SystemException('System not in rollback-safe state');
+        }
+
+        // Security verification
+        if (!$this->security->verifyRollbackSecurity()) {
+            throw new SecurityException('Security verification failed');
+        }
+    }
+
+    private function executeRollback(RollbackPoint $point): void
+    {
+        DB::beginTransaction();
+        
+        try {
+            // Restore database
+            $this->restoreDatabase($point->getDatabaseBackup());
+            
+            // Restore files
+            $this->restoreFiles($point->getFileBackup());
+            
+            // Restore configurations
+            $this->restoreConfigurations($point->getConfigBackup());
+            
+            // Clear caches
+            $this->clearSystemCaches();
+            
+            DB::commit();
+            
+        } catch (\Throwable $e) {
+            DB::rollBack();
+            throw $e;
+        }
+    }
+
+    private function restoreDatabase(DatabaseBackup $backup): void
+    {
+        // Verify backup integrity
+        if (!$this->validator->verifyDatabaseBackup($backup)) {
+            throw new BackupException('Database backup integrity check failed');
+        }
+
+        // Restore tables
+        foreach ($backup->getTables() as $table) {
+            $this->restoreTable($table);
+        }
+
+        // Verify restoration
+        if (!$this->validator->verifyDatabaseState()) {
+            throw new DatabaseException('Database restoration verification failed');
+        }
+    }
+
+    private function restoreFiles(FileBackup $backup): void
+    {
+        // Verify backup integrity
+        if (!$this->validator->verifyFileBackup($backup)) {
+            throw new BackupException('File backup integrity check failed');
+        }
+
+        // Restore file structure
+        $this->filesystem->restore($backup->getFiles());
+
+        // Verify file system
+        if (!$this->validator->verifyFileSystem()) {
+            throw new FileSystemException('File system verification failed');
+        }
+    }
+
+    private function verifySystemState(): void
+    {
+        // Verify system health
+        if (!$this

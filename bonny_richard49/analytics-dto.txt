@@ -1,0 +1,35 @@
+<?php
+
+namespace App\Core\Analytics\DTO;
+
+use App\Core\Shared\DTO\DataTransferObject;
+use JsonSerializable;
+
+class AnalyticsDTO extends DataTransferObject implements JsonSerializable
+{
+    public string $type;
+    public ?int $userId;
+    public string $pageUrl;
+    public array $metrics;
+    public array $dimensions;
+    public array $metadata;
+    public string $sessionId;
+    public ?string $referrer;
+    public ?string $userAgent;
+    public ?string $ipAddress;
+    public ?string $deviceType;
+    public ?string $browser;
+    public ?string $platform;
+
+    public function __construct(array $data)
+    {
+        $this->type = $data['type'];
+        $this->userId = $data['user_id'] ?? null;
+        $this->pageUrl = $data['page_url'];
+        $this->metrics = $data['metrics'] ?? [];
+        $this->dimensions = $data['dimensions'] ?? [];
+        $this->metadata = $data['metadata'] ?? [];
+        $this->sessionId = $data['session_id'];
+        $this->referrer = $data['referrer'] ?? null;
+        $this->userAgent = $data['user_agent'] ?? null;
+        $this->ipAddress = $data['ip_address']

@@ -1,0 +1,217 @@
+<?php
+
+namespace App\Http\Controllers;
+
+use App\Services\ContentService;
+use App\Http\Requests\ContentRequest;
+use App\Core\Security\SecurityManager;
+use App\Core\Performance\PerformanceMonitor;
+use Illuminate\Http\JsonResponse;
+
+class ContentController extends Controller
+{
+    protected ContentService $contentService;
+    protected SecurityManager $security;
+    protected PerformanceMonitor $monitor;
+
+    public function __construct(
+        ContentService $contentService,
+        SecurityManager $security,
+        PerformanceMonitor $monitor
+    ) {
+        $this->contentService = $contentService;
+        $this->security = $security;
+        $this->monitor = $monitor;
+    }
+
+    public function store(ContentRequest $request): JsonResponse
+    {
+        $monitoringId = $this->monitor->startOperation('content.create');
+        
+        try {
+            $this->security->validateOperation('content.create');
+            
+            $content = $this->contentService->createContent(
+                $request->validated()
+            );
+            
+            $metrics = $this->monitor->endOperation($monitoringId);
+            
+            return response()->json([
+                'status' => 'success',
+                'data' => $content,
+                'metrics' => $metrics
+            ], 201);
+            
+        } catch (\Exception $e) {
+            $this->monitor->endOperation($monitoringId);
+            throw $e;
+        }
+    }
+
+    public function update(ContentRequest $request, int $id): JsonResponse
+    {
+        $monitoringId = $this->monitor->startOperation('content.update');
+        
+        try {
+            $this->security->validateOperation('content.update');
+            
+            $content = $this->contentService->updateContent(
+                $id,
+                $request->validated()
+            );
+            
+            $metrics = $this->monitor->endOperation($monitoringId);
+            
+            return response()->json([
+                'status' => 'success',
+                'data' => $content,
+                'metrics' => $metrics
+            ]);
+            
+        } catch (\Exception $e) {
+            $this->monitor->endOperation($monitoringId);
+            throw $e;
+        }
+    }
+
+    public function destroy(int $id): JsonResponse
+    {
+        $monitoringId = $this->monitor->startOperation('content.delete');
+        
+        try {
+            $this->security->validateOperation('content.delete');
+            
+            $result = $this->contentService->deleteContent($id);
+            
+            $metrics = $this->monitor->endOperation($monitoringId);
+            
+            return response()->json([
+                'status' => 'success',
+                'data' => ['deleted' => $result],
+                'metrics' => $metrics
+            ]);
+            
+        } catch (\Exception $e) {
+            $this->monitor->endOperation($monitoringId);
+            throw $e;
+        }
+    }
+
+    public function publish(int $id): JsonResponse
+    {
+        $monitoringId = $this->monitor->startOperation('content.publish');
+        
+        try {
+            $this->security->validateOperation('content.publish');
+            
+            $result = $this->contentService->publishContent($id);
+            
+            $metrics = $this->monitor->endOperation($monitoringId);
+            
+            return response()->json([
+                'status' => 'success',
+                'data' => ['published' => $result],
+                'metrics' => $metrics
+            ]);
+            
+        } catch (\Exception $e) {
+            $this->monitor->endOperation($monitoringId);
+            throw $e;
+        }
+    }
+
+    public function version(int $id): JsonResponse
+    {
+        $monitoringId = $this->monitor->startOperation('content.version');
+        
+        try {
+            $this->security->validateOperation('content.version');
+            
+            $version = $this->contentService->versionContent($id);
+            
+            $metrics = $this->monitor->endOperation($monitoringId);
+            
+            return response()->json([
+                'status' => 'success',
+                'data' => $version,
+                'metrics' => $metrics
+            ]);
+            
+        } catch (\Exception $e) {
+            $this->monitor->endOperation($monitoringId);
+            throw $e;
+        }
+    }
+
+    public function restoreVersion(int $contentId, int $versionId): JsonResponse
+    {
+        $monitoringId = $this->monitor->startOperation('content.restore_version');
+        
+        try {
+            $this->security->validateOperation('content.restore_version');
+            
+            $content = $this->contentService->restoreVersion($contentId, $versionId);
+            
+            $metrics = $this->monitor->endOperation($monitoringId);
+            
+            return response()->json([
+                'status' => 'success',
+                'data' => $content,
+                'metrics' => $metrics
+            ]);
+            
+        } catch (\Exception $e) {
+            $this->monitor->endOperation($monitoringId);
+            throw $e;
+        }
+    }
+
+    public function search(ContentRequest $request): JsonResponse
+    {
+        $monitoringId = $this->monitor->startOperation('content.search');
+        
+        try {
+            $this->security->validateOperation('content.search');
+            
+            $results = $this->contentService->searchContent(
+                $request->validated()
+            );
+            
+            $metrics = $this->monitor->endOperation($monitoringId);
+            
+            return response()->json([
+                'status' => 'success',
+                'data' => $results,
+                'metrics' => $metrics
+            ]);
+            
+        } catch (\Exception $e) {
+            $this->monitor->endOperation($monitoringId);
+            throw $e;
+        }
+    }
+
+    public function stats(): JsonResponse
+    {
+        $monitoringId = $this->monitor->startOperation('content.stats');
+        
+        try {
+            $this->security->validateOperation('content.stats');
+            
+            $stats = $this->contentService->getContentStats();
+            
+            $metrics = $this->monitor->endOperation($monitoringId);
+            
+            return response()->json([
+                'status' => 'success',
+                'data' => $stats,
+                'metrics' => $metrics
+            ]);
+            
+        } catch (\Exception $e) {
+            $this->monitor->endOperation($monitoringId);
+            throw $e;
+        }
+    }
+}

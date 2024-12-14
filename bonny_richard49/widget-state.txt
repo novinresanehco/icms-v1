@@ -1,0 +1,269 @@
+// app/Core/Widget/State/WidgetStateManager.php
+<?php
+
+namespace App\Core\Widget\State;
+
+use App\Core\Widget\Models\Widget;
+use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\Cache;
+
+class WidgetStateManager
+{
+    protected Collection $states;
+    protected array $snapshots = [];
+
+    public function __construct()
+    {
+        $this->states = collect();
+    }
+
+    public function saveState(Widget $widget): void
+    {
+        $this->states->put($widget->id, [
+            'settings' => $widget->settings,
+            'is_active' => $widget->is_active,
+            'visibility_rules' => $widget->visibility_rules,
+            'permissions' => $widget->permissions,
+            'metadata' => $widget->metadata,
+            'timestamp' => now()
+        ]);
+
+        $this->cacheState($widget->id);
+    }
+
+    public function getState(Widget $widget): ?array
+    {
+        return $this->states->get($widget->id);
+    }
+
+    public function compareStates(Widget $widget, array $newState): array
+    {
+        $currentState = $this->getState($widget);
+        
+        if (!$currentState) {
+            return [];
+        }
+
+        $differences = [];
+
+        foreach ($newState as $key => $value) {
+            if (isset($currentState[$key]) && $currentState[$key] !== $value) {
+                $differences[$key] = [
+                    'old' => $currentState[$key],
+                    'new' => $value
+                ];
+            }
+        }
+
+        return $differences;
+    }
+
+    public function createSnapshot(Widget $widget, string $label = ''): string
+    {
+        $snapshotId = uniqid('snapshot_');
+        
+        $this->snapshots[$snapshotId] = [
+            'widget_id' => $widget->id,
+            'state' => $this->getState($widget),
+            'label' => $label,
+            'created_at' => now()
+        ];
+
+        return $snapshotId;
+    }
+
+    public function restoreSnapshot(string $snapshotId): bool
+    {
+        if (!isset($this->snapshots[$snapshotId])) {
+            return false;
+        }
+
+        $snapshot = $this->snapshots[$snapshotId];
+        $widget = Widget::find($snapshot['widget_id']);
+
+        if (!$widget) {
+            return false;
+        }
+
+        foreach ($snapshot['state'] as $key => $value) {
+            if ($key !== 'timestamp') {
+                $widget->{$key} = $value;
+            }
+        }
+
+        $widget->save();
+        $this->saveState($widget);
+
+        return true;
+    }
+
+    protected function cacheState(int $widgetId): void
+    {
+        Cache::tags(['widgets', "widget:{$widgetId}"])
+            ->put(
+                "widget:{$widgetId}:state",
+                $this->states->get($widgetId),
+                now()->addDay()
+            );
+    }
+}
+
+// app/Core/Widget/State/WidgetStateHistory.php
+<?php
+
+namespace App\Core\Widget\State;
+
+use App\Core\Widget\Models\Widget;
+use Illuminate\Support\Collection;
+use Carbon\Carbon;
+
+class WidgetStateHistory
+{
+    protected Collection $history;
+
+    public function __construct()
+    {
+        $this->history = collect();
+    }
+
+    public function recordChange(
+        Widget $widget,
+        string $type,
+        array $before,
+        array $after,
+        ?string $reason = null
+    ): void {
+        $this->history->push([
+            'widget_id' => $widget->id,
+            'type' => $type,
+            'before' => $before,
+            'after' => $after,
+            'reason' => $reason,
+            'user_id' => auth()->id(),
+            'timestamp' => Carbon::now()
+        ]);
+    }
+
+    public function getHistory(Widget $widget): Collection
+    {
+        return $this->history
+            ->where('widget_id', $widget->id)
+            ->sortByDesc('timestamp');
+    }
+
+    public function getChangesByType(Widget $widget, string $type): Collection
+    {
+        return $this->getHistory($widget)
+            ->where('type', $type);
+    }
+
+    public function getRecentChanges(Widget $widget, int $limit = 10): Collection
+    {
+        return $this->getHistory($widget)
+            ->take($limit);
+    }
+
+    public function getChangesBetween(
+        Widget $widget,
+        Carbon $start,
+        Carbon $end
+    ): Collection {
+        return $this->getHistory($widget)
+            ->whereBetween('timestamp', [$start, $end]);
+    }
+
+    public function clearHistory(Widget $widget): void
+    {
+        $this->history = $this->history
+            ->reject(fn($change) => $change['widget_id'] === $widget->id);
+    }
+}
+
+// app/Core/Widget/State/WidgetRestorePoint.php
+<?php
+
+namespace App\Core\Widget\State;
+
+use App\Core\Widget\Models\Widget;
+use Carbon\Carbon;
+
+class WidgetRestorePoint
+{
+    protected string $id;
+    protected Widget $widget;
+    protected array $state;
+    protected string $label;
+    protected ?string $description;
+    protected Carbon $createdAt;
+
+    public function __construct(
+        Widget $widget,
+        array $state,
+        string $label = '',
+        ?string $description = null
+    ) {
+        $this->id = uniqid('restore_');
+        $this->widget = $widget;
+        $this->state = $state;
+        $this->label = $label;
+        $this->description = $description;
+        $this->createdAt = Carbon::now();
+    }
+
+    public function getId(): string
+    {
+        return $this->id;
+    }
+
+    public function getWidget(): Widget
+    {
+        return $this->widget;
+    }
+
+    public function getState(): array
+    {
+        return $this->state;
+    }
+
+    public function getLabel(): string
+    {
+        return $this->label;
+    }
+
+    public function getDescription(): ?string
+    {
+        return $this->description;
+    }
+
+    public function getCreatedAt(): Carbon
+    {
+        return $this->createdAt;
+    }
+
+    public function restore(): bool
+    {
+        foreach ($this->state as $key => $value) {
+            if ($key !== 'timestamp') {
+                $this->widget->{$key} = $value;
+            }
+        }
+
+        return $this->widget->save();
+    }
+
+    public function compare(array $currentState): array
+    {
+        $differences = [];
+
+        foreach ($this->state as $key => $value) {
+            if (isset($currentState[$key]) && $currentState[$key] !== $value) {
+                $differences[$key] = [
+                    'restore_point' => $value,
+                    'current' => $currentState[$key]
+                ];
+            }
+        }
+
+        return $differences;
+    }
+}

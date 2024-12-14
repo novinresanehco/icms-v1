@@ -1,0 +1,209 @@
+<?php
+
+namespace App\Core\Media;
+
+use App\Core\Security\SecurityManager;
+use App\Core\Validation\ValidationService;
+use App\Core\Events\EventDispatcher;
+use App\Core\Storage\StorageManager;
+
+class MediaManager
+{
+    private SecurityManager $security;
+    private ValidationService $validator;
+    private EventDispatcher $events;
+    private StorageManager $storage;
+
+    private const ALLOWED_MIME_TYPES = [
+        'image/jpeg',
+        'image/png',
+        'image/gif',
+        'application/pdf',
+        'video/mp4',
+        'audio/mpeg'
+    ];
+
+    private const MAX_FILE_SIZE = 52428800; // 50MB
+
+    public function __construct(
+        SecurityManager $security,
+        ValidationService $validator,
+        EventDispatcher $events,
+        StorageManager $storage
+    ) {
+        $this->security = $security;
+        $this->validator = $validator;
+        $this->events = $events;
+        $this->storage = $storage;
+    }
+
+    public function upload(UploadedFile $file, array $metadata = []): Media
+    {
+        DB::beginTransaction();
+
+        try {
+            $this->validateFile($file);
+            $this->validateMetadata($metadata);
+
+            $media = new Media([
+                'filename' => $this->generateFileName($file),
+                'mime_type' => $file->getMimeType(),
+                'size' => $file->getSize(),
+                'metadata' => $metadata
+            ]);
+
+            $path = $this->storage->store(
+                $file,
+                $this->getStoragePath($media),
+                $this->getStorageOptions($media)
+            );
+
+            $media->path = $path;
+            $media->save();
+
+            $this->generateThumbnails($media);
+            $this->processOptimizations($media);
+
+            DB::commit();
+            $this->events->dispatch('media.uploaded', $media);
+
+            return $media;
+
+        } catch (\Exception $e) {
+            DB::rollBack();
+            $this->cleanup($file);
+            throw $e;
+        }
+    }
+
+    public function delete(Media $media): bool
+    {
+        DB::beginTransaction();
+
+        try {
+            $this->security->validateOperation('media.delete');
+            $this->validateDeletion($media);
+
+            $this->storage->delete($media->path);
+            $this->deleteThumbnails($media);
+            $deleted = $media->delete();
+
+            DB::commit();
+            $this->events->dispatch('media.deleted', $media);
+
+            return $deleted;
+
+        } catch (\Exception $e) {
+            DB::rollBack();
+            throw $e;
+        }
+    }
+
+    public function generateThumbnails(Media $media): void
+    {
+        if (!$this->isSupportedImageType($media->mime_type)) {
+            return;
+        }
+
+        foreach (config('media.thumbnails') as $size => $dimensions) {
+            $thumbnail = $this->createThumbnail($media, $dimensions);
+            $this->saveThumbnail($media, $thumbnail, $size);
+        }
+    }
+
+    public function processOptimizations(Media $media): void
+    {
+        if ($this->isImage($media)) {
+            $this->optimizeImage($media);
+        } elseif ($this->isVideo($media)) {
+            $this->optimizeVideo($media);
+        }
+    }
+
+    public function validateFile(UploadedFile $file): void
+    {
+        if (!$file->isValid()) {
+            throw new MediaException('Invalid file upload');
+        }
+
+        if (!in_array($file->getMimeType(), self::ALLOWED_MIME_TYPES)) {
+            throw new MediaException('Unsupported file type');
+        }
+
+        if ($file->getSize() > self::MAX_FILE_SIZE) {
+            throw new MediaException('File size exceeds limit');
+        }
+
+        $this->validator->validate(['file' => $file], [
+            'file' => 'required|file|max:' . (self::MAX_FILE_SIZE / 1024)
+        ]);
+    }
+
+    private function validateMetadata(array $metadata): void
+    {
+        $this->validator->validate($metadata, [
+            'title' => 'nullable|string|max:255',
+            'description' => 'nullable|string',
+            'alt_text' => 'nullable|string|max:255',
+            'author' => 'nullable|string|max:255',
+            'copyright' => 'nullable|string|max:255'
+        ]);
+    }
+
+    private function validateDeletion(Media $media): void
+    {
+        if ($media->isInUse()) {
+            throw new MediaException('Cannot delete media in use');
+        }
+    }
+
+    private function generateFileName(UploadedFile $file): string
+    {
+        return sprintf(
+            '%s_%s.%s',
+            time(),
+            uniqid(),
+            $file->getClientOriginalExtension()
+        );
+    }
+
+    private function getStoragePath(Media $media): string
+    {
+        return sprintf(
+            'media/%s/%s/%s',
+            date('Y'),
+            date('m'),
+            $media->filename
+        );
+    }
+
+    private function getStorageOptions(Media $media): array
+    {
+        return [
+            'visibility' => 'public',
+            'mime_type' => $media->mime_type
+        ];
+    }
+
+    private function isSupportedImageType(string $mimeType): bool
+    {
+        return in_array($mimeType, ['image/jpeg', 'image/png', 'image/gif']);
+    }
+
+    private function isImage(Media $media): bool
+    {
+        return strpos($media->mime_type, 'image/') === 0;
+    }
+
+    private function isVideo(Media $media): bool
+    {
+        return strpos($media->mime_type, 'video/') === 0;
+    }
+
+    private function cleanup(UploadedFile $file): void
+    {
+        if ($file->getPathname() && file_exists($file->getPathname())) {
+            unlink($file->getPathname());
+        }
+    }
+}

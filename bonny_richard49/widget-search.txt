@@ -1,0 +1,253 @@
+// app/Core/Widget/Search/WidgetSearchService.php
+<?php
+
+namespace App\Core\Widget\Search;
+
+use App\Core\Widget\Models\Widget;
+use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Support\Collection;
+
+class WidgetSearchService
+{
+    public function search(array $criteria): Collection
+    {
+        $query = Widget::query();
+        
+        $this->applyBasicCriteria($query, $criteria);
+        $this->applyAdvancedCriteria($query, $criteria);
+        $this->applySorting($query, $criteria);
+        
+        return $query->get();
+    }
+
+    protected function applyBasicCriteria(Builder $query, array $criteria): void
+    {
+        if (!empty($criteria['keyword'])) {
+            $query->where(function($q) use ($criteria) {
+                $q->where('name', 'like', "%{$criteria['keyword']}%")
+                  ->orWhere('identifier', 'like', "%{$criteria['keyword']}%");
+            });
+        }
+
+        if (!empty($criteria['type'])) {
+            $query->where('type', $criteria['type']);
+        }
+
+        if (!empty($criteria['area'])) {
+            $query->where('area', $criteria['area']);
+        }
+
+        if (isset($criteria['is_active'])) {
+            $query->where('is_active', $criteria['is_active']);
+        }
+    }
+
+    protected function applyAdvancedCriteria(Builder $query, array $criteria): void
+    {
+        if (!empty($criteria['settings'])) {
+            foreach ($criteria['settings'] as $key => $value) {
+                $query->whereJsonContains("settings->{$key}", $value);
+            }
+        }
+
+        if (!empty($criteria['permissions'])) {
+            foreach ($criteria['permissions'] as $permission) {
+                $query->whereJsonContains('permissions', $permission);
+            }
+        }
+
+        if (!empty($criteria['metadata'])) {
+            foreach ($criteria['metadata'] as $key => $value) {
+                $query->whereJsonContains("metadata->{$key}", $value);
+            }
+        }
+
+        if (!empty($criteria['created_after'])) {
+            $query->where('created_at', '>=', $criteria['created_after']);
+        }
+
+        if (!empty($criteria['created_before'])) {
+            $query->where('created_at', '<=', $criteria['created_before']);
+        }
+    }
+
+    protected function applySorting(Builder $query, array $criteria): void
+    {
+        $sortField = $criteria['sort_by'] ?? 'created_at';
+        $sortDirection = $criteria['sort_direction'] ?? 'desc';
+        
+        if ($sortField === 'area') {
+            $query->orderBy('area', $sortDirection)
+                  ->orderBy('order', 'asc');
+        } else {
+            $query->orderBy($sortField, $sortDirection);
+        }
+    }
+}
+
+// app/Core/Widget/Search/WidgetSearchIndex.php
+<?php
+
+namespace App\Core\Widget\Search;
+
+use App\Core\Widget\Models\Widget;
+use Illuminate\Support\Collection;
+
+class WidgetSearchIndex
+{
+    protected array $index = [];
+
+    public function indexWidget(Widget $widget): void
+    {
+        $this->index[$widget->id] = [
+            'id' => $widget->id,
+            'name' => $widget->name,
+            'identifier' => $widget->identifier,
+            'type' => $widget->type,
+            'area' => $widget->area,
+            'settings' => $widget->settings,
+            'metadata' => $widget->metadata,
+            'is_active' => $widget->is_active,
+            'created_at' => $widget->created_at->timestamp,
+            'updated_at' => $widget->updated_at->timestamp
+        ];
+    }
+
+    public function removeFromIndex(int $widgetId): void
+    {
+        unset($this->index[$widgetId]);
+    }
+
+    public function search(array $criteria): Collection
+    {
+        $results = collect($this->index);
+
+        if (!empty($criteria['keyword'])) {
+            $results = $this->searchByKeyword($results, $criteria['keyword']);
+        }
+
+        if (!empty($criteria['filters'])) {
+            $results = $this->applyFilters($results, $criteria['filters']);
+        }
+
+        if (!empty($criteria['sort'])) {
+            $results = $this->applySorting($results, $criteria['sort']);
+        }
+
+        return $results;
+    }
+
+    protected function searchByKeyword(Collection $results, string $keyword): Collection
+    {
+        return $results->filter(function ($item) use ($keyword) {
+            return str_contains(strtolower($item['name']), strtolower($keyword)) ||
+                   str_contains(strtolower($item['identifier']), strtolower($keyword));
+        });
+    }
+
+    protected function applyFilters(Collection $results, array $filters): Collection
+    {
+        return $results->filter(function ($item) use ($filters) {
+            foreach ($filters as $key => $value) {
+                if (!$this->matchesFilter($item, $key, $value)) {
+                    return false;
+                }
+            }
+            return true;
+        });
+    }
+
+    protected function matchesFilter($item, string $key, $value): bool
+    {
+        if (str_contains($key, '.')) {
+            [$field, $subfield] = explode('.', $key);
+            return isset($item[$field][$subfield]) && $item[$field][$subfield] === $value;
+        }
+
+        return isset($item[$key]) && $item[$key] === $value;
+    }
+
+    protected function applySorting(Collection $results, array $sort): Collection
+    {
+        $field = $sort['field'] ?? 'created_at';
+        $direction = $sort['direction'] ?? 'desc';
+
+        return $results->sortBy($field, SORT_REGULAR, $direction === 'desc');
+    }
+}
+
+// app/Core/Widget/Search/WidgetSearchCriteria.php
+<?php
+
+namespace App\Core\Widget\Search;
+
+class WidgetSearchCriteria
+{
+    protected array $criteria = [];
+
+    public function keyword(string $keyword): self
+    {
+        $this->criteria['keyword'] = $keyword;
+        return $this;
+    }
+
+    public function type(string $type): self
+    {
+        $this->criteria['type'] = $type;
+        return $this;
+    }
+
+    public function area(string $area): self
+    {
+        $this->criteria['area'] = $area;
+        return $this;
+    }
+
+    public function active(bool $active = true): self
+    {
+        $this->criteria['is_active'] = $active;
+        return $this;
+    }
+
+    public function withSettings(array $settings): self
+    {
+        $this->criteria['settings'] = $settings;
+        return $this;
+    }
+
+    public function withPermissions(array $permissions): self
+    {
+        $this->criteria['permissions'] = $permissions;
+        return $this;
+    }
+
+    public function withMetadata(array $metadata): self
+    {
+        $this->criteria['metadata'] = $metadata;
+        return $this;
+    }
+
+    public function createdAfter(string $date): self
+    {
+        $this->criteria['created_after'] = $date;
+        return $this;
+    }
+
+    public function createdBefore(string $date): self
+    {
+        $this->criteria['created_before'] = $date;
+        return $this;
+    }
+
+    public function sortBy(string $field, string $direction = 'asc'): self
+    {
+        $this->criteria['sort_by'] = $field;
+        $this->criteria['sort_direction'] = $direction;
+        return $this;
+    }
+
+    public function get(): array
+    {
+        return $this->criteria;
+    }
+}

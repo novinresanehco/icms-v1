@@ -1,0 +1,215 @@
+<?php
+
+namespace App\Core\Localization\Services;
+
+class TranslationLoader
+{
+    protected FileLoader $fileLoader;
+    protected DatabaseLoader $databaseLoader;
+    protected array $loaders = [];
+    protected array $sources = [];
+
+    public function __construct(FileLoader $fileLoader, DatabaseLoader $databaseLoader)
+    {
+        $this->fileLoader = $fileLoader;
+        $this->databaseLoader = $databaseLoader;
+        
+        $this->registerLoader('file', $fileLoader);
+        $this->registerLoader('database', $databaseLoader);
+    }
+
+    public function load(string $locale): array
+    {
+        $translations = [];
+
+        foreach ($this->sources as $source) {
+            if (isset($this->loaders[$source])) {
+                $translations = array_merge(
+                    $translations,
+                    $this->loaders[$source]->load($locale)
+                );
+            }
+        }
+
+        return $translations;
+    }
+
+    public function import(array $translations, string $locale): void
+    {
+        foreach ($this->loaders as $loader) {
+            $loader->import($translations, $locale);
+        }
+    }
+
+    public function update(string $key, string $value, string $locale): void
+    {
+        foreach ($this->loaders as $loader) {
+            $loader->update($key, $value, $locale);
+        }
+    }
+
+    public function delete(string $key, string $locale): void
+    {
+        foreach ($this->loaders as $loader) {
+            $loader->delete($key, $locale);
+        }
+    }
+
+    public function registerLoader(string $name, TranslationLoaderInterface $loader): void
+    {
+        $this->loaders[$name] = $loader;
+    }
+
+    public function addSource(string $source): void
+    {
+        if (!in_array($source, $this->sources)) {
+            $this->sources[] = $source;
+        }
+    }
+}
+
+class FileLoader implements TranslationLoaderInterface
+{
+    protected Filesystem $files;
+    protected string $path;
+
+    public function __construct(Filesystem $files, string $path)
+    {
+        $this->files = $files;
+        $this->path = $path;
+    }
+
+    public function load(string $locale): array
+    {
+        $translations = [];
+        $path = $this->getLocalePath($locale);
+
+        if ($this->files->exists($path)) {
+            $files = $this->files->allFiles($path);
+
+            foreach ($files as $file) {
+                $group = $this->getTranslationGroup($file);
+                $translations = array_merge(
+                    $translations,
+                    $this->loadFile($file, $group)
+                );
+            }
+        }
+
+        return $translations;
+    }
+
+    public function import(array $translations, string $locale): void
+    {
+        foreach ($translations as $group => $items) {
+            $path = $this->getLocalePath($locale) . "/{$group}.php";
+            $content = "<?php\n\nreturn " . var_export($items, true) . ";\n";
+            $this->files->put($path, $content);
+        }
+    }
+
+    public function update(string $key, string $value, string $locale): void
+    {
+        [$group, $item] = explode('.', $key, 2);
+        $path = $this->getLocalePath($locale) . "/{$group}.php";
+
+        $translations = $this->loadFile(new SplFileInfo($path), $group);
+        Arr::set($translations, $item, $value);
+
+        $content = "<?php\n\nreturn " . var_export($translations, true) . ";\n";
+        $this->files->put($path, $content);
+    }
+
+    public function delete(string $key, string $locale): void
+    {
+        [$group, $item] = explode('.', $key, 2);
+        $path = $this->getLocalePath($locale) . "/{$group}.php";
+
+        $translations = $this->loadFile(new SplFileInfo($path), $group);
+        Arr::forget($translations, $item);
+
+        $content = "<?php\n\nreturn " . var_export($translations, true) . ";\n";
+        $this->files->put($path, $content);
+    }
+
+    protected function getLocalePath(string $locale): string
+    {
+        return $this->path . '/' . $locale;
+    }
+
+    protected function getTranslationGroup(SplFileInfo $file): string
+    {
+        return $file->getBasename('.php');
+    }
+
+    protected function loadFile(SplFileInfo $file, string $group): array
+    {
+        return $this->files->getRequire($file->getPathname());
+    }
+}
+
+class DatabaseLoader implements TranslationLoaderInterface
+{
+    protected Connection $db;
+
+    public function __construct(Connection $db)
+    {
+        $this->db = $db;
+    }
+
+    public function load(string $locale): array
+    {
+        return $this->db->table('translations')
+            ->where('locale', $locale)
+            ->pluck('value', 'key')
+            ->toArray();
+    }
+
+    public function import(array $translations, string $locale): void
+    {
+        $data = [];
+        
+        foreach ($translations as $key => $value) {
+            $data[] = [
+                'key' => $key,
+                'value' => $value,
+                'locale' => $locale,
+                'created_at' => now(),
+                'updated_at' => now()
+            ];
+        }
+
+        $this->db->table('translations')->insert($data);
+    }
+
+    public function update(string $key, string $value, string $locale): void
+    {
+        $this->db->table('translations')
+            ->updateOrInsert(
+                ['key' => $key, 'locale' => $locale],
+                ['value' => $value, 'updated_at' => now()]
+            );
+    }
+
+    public function delete(string $key, string $locale): void
+    {
+        $this->db->table('translations')
+            ->where('key', $key)
+            ->where('locale', $locale)
+            ->delete();
+    }
+}
+
+class TranslationCache
+{
+    protected CacheManager $cache;
+    protected string $prefix = 'translations';
+    protected int $ttl;
+
+    public function __construct(CacheManager $cache, int $ttl = 3600)
+    {
+        $this->cache = $cache;
+        $this->ttl = $ttl;
+    }
+
+    public function remember(string $locale, callable

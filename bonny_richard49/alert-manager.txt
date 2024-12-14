@@ -1,0 +1,135 @@
+<?php
+
+namespace App\Core\Alerts;
+
+class AlertManager implements AlertInterface
+{
+    private NotificationService $notifications;
+    private LogManager $logger;
+    private array $alertConfig;
+
+    public function sendAlert(array $data): void
+    {
+        // Log alert
+        $this->logger->logAlert($data);
+
+        // Determine severity
+        $severity = $this->determineSeverity($data);
+
+        // Send notification based on severity
+        switch ($severity) {
+            case 'critical':
+                $this->sendCriticalAlert($data);
+                break;
+            case 'warning':
+                $this->sendWarningAlert($data);
+                break;
+            default:
+                $this->sendInfoAlert($data);
+        }
+    }
+
+    public function sendThresholdAlert(
+        string $operationId,
+        string $metric,
+        $value,
+        $threshold
+    ): void {
+        $this->sendAlert([
+            'type' => 'threshold_violation',
+            'operation_id' => $operationId,
+            'metric' => $metric,
+            'value' => $value,
+            'threshold' => $threshold,
+            'time' => time()
+        ]);
+    }
+
+    public function clearAlerts(string $operationId): void
+    {
+        // Clear alert history
+        $this->logger->clearAlertHistory($operationId);
+        
+        // Clear pending notifications
+        $this->notifications->clearPending($operationId);
+    }
+
+    protected function sendCriticalAlert(array $data): void
+    {
+        $this->notifications->sendImmediate(
+            $this->alertConfig['critical_channels'],
+            $this->formatCriticalAlert($data)
+        );
+    }
+
+    protected function sendWarningAlert(array $data): void
+    {
+        $this->notifications->send(
+            $this->alertConfig['warning_channels'],
+            $this->formatWarningAlert($data)
+        );
+    }
+
+    protected function sendInfoAlert(array $data): void
+    {
+        $this->notifications->sendLow(
+            $this->alertConfig['info_channels'],
+            $this->formatInfoAlert($data)
+        );
+    }
+
+    protected function determineSeverity(array $data): string
+    {
+        if (isset($data['error'])) {
+            return 'critical';
+        }
+
+        if (isset($data['warning'])) {
+            return 'warning';
+        }
+
+        return 'info';
+    }
+
+    protected function formatCriticalAlert(array $data): array
+    {
+        return [
+            'title' => 'CRITICAL ALERT',
+            'message' => $data['error'] ?? 'System error occurred',
+            'data' => $data,
+            'time' => time(),
+            'level' => 'critical'
+        ];
+    }
+
+    protected function formatWarningAlert(array $data): array
+    {
+        return [
+            'title' => 'Warning Alert',
+            'message' => $data['warning'] ?? 'System warning',
+            'data' => $data,
+            'time' => time(),
+            'level' => 'warning'
+        ];
+    }
+
+    protected function formatInfoAlert(array $data): array
+    {
+        return [
+            'title' => 'System Notification',
+            'message' => $data['message'] ?? 'System notification',
+            'data' => $data,
+            'time' => time(),
+            'level' => 'info'
+        ];
+    }
+}
+
+interface AlertInterface
+{
+    public function sendAlert(array $data): void;
+    public function sendThresholdAlert(string $operationId, string $metric, $value, $threshold): void;
+    public function clearAlerts(string $operationId): void;
+}
+
+class AlertException extends \Exception {}

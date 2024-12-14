@@ -1,0 +1,23 @@
+<?php
+namespace App\Core\Infrastructure;
+
+class SystemMonitor implements MonitorInterface
+{
+    private MetricsCollector $metrics;
+    private AlertManager $alerts;
+    private Logger $logger;
+    private PerformanceAnalyzer $analyzer;
+
+    public function monitorSystem(): void
+    {
+        try {
+            $metrics = $this->collectSystemMetrics();
+            $this->analyzeMetrics($metrics);
+            $this->storeMetrics($metrics);
+            $this->checkThresholds($metrics);
+        } catch (\Exception $e) {
+            $this->handleMonitoringFailure($e);
+        }
+    }
+
+    private function collectSystemMetrics(): array

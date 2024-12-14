@@ -1,0 +1,190 @@
+<?php
+
+namespace App\Core\Storage;
+
+use App\Core\Security\SecurityManager;
+use App\Core\Events\EventDispatcher;
+use Illuminate\Support\Facades\Storage;
+use Illuminate\Http\UploadedFile;
+
+class StorageManager
+{
+    private SecurityManager $security;
+    private EventDispatcher $events;
+    private array $config;
+
+    private const ALLOWED_DISKS = ['local', 's3', 'sftp'];
+
+    public function __construct(
+        SecurityManager $security,
+        EventDispatcher $events,
+        array $config
+    ) {
+        $this->security = $security;
+        $this->events = $events;
+        $this->config = $config;
+    }
+
+    public function store(UploadedFile $file, string $path, array $options = []): string
+    {
+        $this->validateDisk($options['disk'] ?? null);
+        $this->validatePath($path);
+        
+        $storage = $this->getStorage($options['disk'] ?? null);
+        
+        try {
+            $path = $storage->putFileAs(
+                dirname($path),
+                $file,
+                basename($path),
+                $this->getStorageOptions($options)
+            );
+
+            $this->events->dispatch('storage.file_stored', [
+                'path' => $path,
+                'disk' => $storage->getDriver()->getAdapter()->getPathPrefix(),
+                'size' => $file->getSize()
+            ]);
+
+            return $path;
+
+        } catch (\Exception $e) {
+            $this->events->dispatch('storage.store_failed', [
+                'path' => $path,
+                'error' => $e->getMessage()
+            ]);
+            throw $e;
+        }
+    }
+
+    public function delete(string $path, ?string $disk = null): bool
+    {
+        $this->validateDisk($disk);
+        $this->validatePath($path);
+        
+        $storage = $this->getStorage($disk);
+        
+        try {
+            $result = $storage->delete($path);
+
+            $this->events->dispatch('storage.file_deleted', [
+                'path' => $path,
+                'disk' => $storage->getDriver()->getAdapter()->getPathPrefix()
+            ]);
+
+            return $result;
+
+        } catch (\Exception $e) {
+            $this->events->dispatch('storage.delete_failed', [
+                'path' => $path,
+                'error' => $e->getMessage()
+            ]);
+            throw $e;
+        }
+    }
+
+    public function copy(string $from, string $to, ?string $disk = null): bool
+    {
+        $this->validateDisk($disk);
+        $this->validatePath($from);
+        $this->validatePath($to);
+        
+        $storage = $this->getStorage($disk);
+        
+        try {
+            $result = $storage->copy($from, $to);
+
+            $this->events->dispatch('storage.file_copied', [
+                'from' => $from,
+                'to' => $to,
+                'disk' => $storage->getDriver()->getAdapter()->getPathPrefix()
+            ]);
+
+            return $result;
+
+        } catch (\Exception $e) {
+            $this->events->dispatch('storage.copy_failed', [
+                'from' => $from,
+                'to' => $to,
+                'error' => $e->getMessage()
+            ]);
+            throw $e;
+        }
+    }
+
+    public function move(string $from, string $to, ?string $disk = null): bool
+    {
+        $this->validateDisk($disk);
+        $this->validatePath($from);
+        $this->validatePath($to);
+        
+        $storage = $this->getStorage($disk);
+        
+        try {
+            $result = $storage->move($from, $to);
+
+            $this->events->dispatch('storage.file_moved', [
+                'from' => $from,
+                'to' => $to,
+                'disk' => $storage->getDriver()->getAdapter()->getPathPrefix()
+            ]);
+
+            return $result;
+
+        } catch (\Exception $e) {
+            $this->events->dispatch('storage.move_failed', [
+                'from' => $from,
+                'to' => $to,
+                'error' => $e->getMessage()
+            ]);
+            throw $e;
+        }
+    }
+
+    public function size(string $path, ?string $disk = null): int
+    {
+        $this->validateDisk($disk);
+        $this->validatePath($path);
+        
+        return $this->getStorage($disk)->size($path);
+    }
+
+    public function exists(string $path, ?string $disk = null): bool
+    {
+        $this->validateDisk($disk);
+        $this->validatePath($path);
+        
+        return $this->getStorage($disk)->exists($path);
+    }
+
+    private function validateDisk(?string $disk): void
+    {
+        if ($disk && !in_array($disk, self::ALLOWED_DISKS)) {
+            throw new StorageException('Invalid storage disk');
+        }
+    }
+
+    private function validatePath(string $path): void
+    {
+        if (empty($path)) {
+            throw new StorageException('Empty file path');
+        }
+
+        if (strpos($path, '..') !== false) {
+            throw new StorageException('Invalid file path');
+        }
+    }
+
+    private function getStorage(?string $disk): \Illuminate\Contracts\Filesystem\Filesystem
+    {
+        return Storage::disk($disk ?? $this->config['default_disk'] ?? 'local');
+    }
+
+    private function getStorageOptions(array $options): array
+    {
+        return array_merge([
+            'visibility' => 'private',
+            'directory_visibility' => 'private'
+        ], $options);
+    }
+}

@@ -1,0 +1,25 @@
+<?php
+
+namespace App\Core\Notification\Analytics\Processor;
+
+class BatchProcessor
+{
+    private array $processors = [];
+    private array $metrics = [];
+    private array $config;
+
+    public function __construct(array $config = [])
+    {
+        $this->config = array_merge([
+            'batch_size' => 1000,
+            'timeout' => 30,
+            'retry_attempts' => 3
+        ], $config);
+    }
+
+    public function addProcessor(string $name, ProcessorInterface $processor): void
+    {
+        $this->processors[$name] = $processor;
+    }
+
+    public function process(array $data, string $processorName, array $options =

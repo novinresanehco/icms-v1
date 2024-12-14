@@ -1,0 +1,124 @@
+CRITICAL_PROJECT_PROTOCOL = {
+    "DAY_1_SECURITY": {
+        "SECURITY_CORE": {
+            "0800_1000": {
+                "TASK": "AUTHENTICATION",
+                "OWNER": "SENIOR_DEV_1",
+                "STATUS": "CRITICAL",
+                "REQUIREMENTS": [
+                    "MULTI_FACTOR_AUTHENTICATION",
+                    "SESSION_MANAGEMENT",
+                    "TOKEN_VALIDATION"
+                ]
+            },
+            "1000_1200": {
+                "TASK": "AUTHORIZATION",
+                "OWNER": "SENIOR_DEV_1", 
+                "STATUS": "CRITICAL",
+                "REQUIREMENTS": [
+                    "ROLE_BASED_ACCESS",
+                    "PERMISSION_SYSTEM",
+                    "ACCESS_CONTROL"
+                ]
+            },
+            "1300_1700": {
+                "TASK": "DATA_PROTECTION",
+                "OWNER": "SENIOR_DEV_1",
+                "STATUS": "CRITICAL", 
+                "REQUIREMENTS": [
+                    "ENCRYPTION_LAYER",
+                    "AUDIT_LOGGING",
+                    "INTEGRITY_CHECKS"
+                ]
+            }
+        }
+    },
+
+    "DAY_2_CMS": {
+        "CMS_CORE": {
+            "0800_1200": {
+                "TASK": "CONTENT_MANAGEMENT",
+                "OWNER": "SENIOR_DEV_2",
+                "STATUS": "CRITICAL",
+                "REQUIREMENTS": [
+                    "SECURE_STORAGE",
+                    "VERSION_CONTROL",
+                    "MEDIA_HANDLING"
+                ]
+            },
+            "1300_1700": {
+                "TASK": "SECURITY_INTEGRATION",
+                "OWNER": "SENIOR_DEV_2",
+                "STATUS": "CRITICAL",
+                "REQUIREMENTS": [
+                    "AUTHENTICATION_HOOKS",
+                    "ACCESS_CONTROL",
+                    "AUDIT_SYSTEM"
+                ]
+            }
+        }
+    },
+
+    "DAY_3_INFRASTRUCTURE": {
+        "PERFORMANCE": {
+            "0800_1200": {
+                "TASK": "OPTIMIZATION",
+                "OWNER": "DEV_3",
+                "STATUS": "CRITICAL",
+                "REQUIREMENTS": [
+                    "RESPONSE_TIME<100MS",
+                    "CPU_USAGE<70%",
+                    "MEMORY<80%"
+                ]
+            },
+            "1300_1700": {
+                "TASK": "STABILITY",
+                "OWNER": "DEV_3", 
+                "STATUS": "CRITICAL",
+                "REQUIREMENTS": [
+                    "LOAD_BALANCING",
+                    "FAILOVER_SYSTEM",
+                    "ERROR_HANDLING"
+                ]
+            }
+        }
+    },
+
+    "VALIDATION_GATES": {
+        "SECURITY": {
+            "REQUIREMENTS": [
+                "PENETRATION_TEST",
+                "VULNERABILITY_SCAN",
+                "ACCESS_CONTROL_AUDIT"
+            ],
+            "ACCEPTANCE": "ZERO_VULNERABILITIES"
+        },
+        "PERFORMANCE": {
+            "REQUIREMENTS": {
+                "API_RESPONSE": "<100ms",
+                "PAGE_LOAD": "<200ms",
+                "ERROR_RATE": "<0.01%"
+            }
+        },
+        "CODE_QUALITY": {
+            "REQUIREMENTS": [
+                "PSR_12_COMPLIANCE",
+                "FULL_TYPE_SAFETY",
+                "COMPLETE_TESTING"
+            ]
+        }
+    },
+
+    "ERROR_PREVENTION": {
+        "MONITORING": {
+            "SECURITY": "REAL_TIME",
+            "PERFORMANCE": "CONTINUOUS",
+            "ERRORS": "IMMEDIATE_DETECTION"
+        },
+        "RESPONSE": {
+            "CRITICAL": "IMMEDIATE",
+            "HIGH": "<5min",
+            "MEDIUM": "<15min"
+        }
+    }
+}

@@ -1,0 +1,49 @@
+<?php
+
+namespace App\Core\Notification\Analytics\Export;
+
+class AnalyticsExporter
+{
+    private array $formatters;
+    private array $writers;
+    private array $options;
+
+    public function __construct(array $options = [])
+    {
+        $this->options = array_merge([
+            'chunk_size' => 1000,
+            'temp_directory' => storage_path('analytics/temp'),
+            'default_format' => 'csv'
+        ], $options);
+
+        $this->initializeFormatters();
+        $this->initializeWriters();
+    }
+
+    public function export(array $data, string $format, string $destination): string
+    {
+        if (!isset($this->formatters[$format])) {
+            throw new \InvalidArgumentException("Unsupported format: {$format}");
+        }
+
+        $formatter = $this->formatters[$format];
+        $writer = $this->writers[$format];
+        
+        $chunks = array_chunk($data, $this->options['chunk_size']);
+        $tempFile = $this->createTempFile($format);
+
+        foreach ($chunks as $chunk) {
+            $formatted = $formatter($chunk);
+            $writer($formatted, $tempFile);
+        }
+
+        return $this->finalizeExport($tempFile, $destination);
+    }
+
+    private function initializeFormatters(): void
+    {
+        $this->formatters = [
+            'csv' => function(array $data) {
+                $output = [];
+                if (empty($data)) {
+                    return '';

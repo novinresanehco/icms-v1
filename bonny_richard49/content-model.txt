@@ -1,0 +1,162 @@
+<?php
+
+namespace App\Models;
+
+use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\SoftDeletes;
+use App\Core\Traits\Auditable;
+use App\Core\Traits\Versionable;
+use App\Core\Traits\Searchable;
+
+class Content extends Model
+{
+    use SoftDeletes, Auditable, Versionable, Searchable;
+
+    protected $fillable = [
+        'title',
+        'body',
+        'status',
+        'author_id',
+        'category_id',
+        'publish_at',
+        'meta_description',
+        'meta_keywords'
+    ];
+
+    protected $casts = [
+        'publish_at' => 'datetime',
+        'created_at' => 'datetime',
+        'updated_at' => 'datetime',
+        'deleted_at' => 'datetime'
+    ];
+
+    protected $dates = [
+        'publish_at',
+        'created_at',
+        'updated_at',
+        'deleted_at'
+    ];
+
+    public function author()
+    {
+        return $this->belongsTo(User::class, 'author_id');
+    }
+
+    public function category()
+    {
+        return $this->belongsTo(Category::class);
+    }
+
+    public function tags()
+    {
+        return $this->belongsToMany(Tag::class);
+    }
+
+    public function versions()
+    {
+        return $this->hasMany(ContentVersion::class);
+    }
+
+    public function isReadyForPublishing(): bool
+    {
+        return $this->status === 'review' && 
+               $this->hasRequiredFields() && 
+               !$this->hasPendingReviews();
+    }
+
+    public function hasRequiredFields(): bool
+    {
+        return !empty($this->title) && 
+               !empty($this->body) && 
+               !empty($this->author_id) && 
+               !empty($this->category_id);
+    }
+
+    public function hasPendingReviews(): bool
+    {
+        return $this->reviews()
+            ->where('status', 'pending')
+            ->exists();
+    }
+
+    public function isValid(): bool
+    {
+        return $this->validateState() && 
+               $this->validateRelations() && 
+               $this->validateContent();
+    }
+
+    public function publish(): bool
+    {
+        if (!$this->isReadyForPublishing()) {
+            return false;
+        }
+
+        $this->status = 'published';
+        $this->publish_at = now();
+        
+        return $this->save();
+    }
+
+    public function createVersion(): ContentVersion
+    {
+        return $this->versions()->create([
+            'title' => $this->title,
+            'body' => $this->body,
+            'meta_description' => $this->meta_description,
+            'meta_keywords' => $this->meta_keywords,
+            'version' => $this->versions()->count() + 1
+        ]);
+    }
+
+    public function restoreVersion(int $versionId): self
+    {
+        $version = $this->versions()->findOrFail($versionId);
+        
+        $this->update([
+            'title' => $version->title,
+            'body' => $version->body,
+            'meta_description' => $version->meta_description,
+            'meta_keywords' => $version->meta_keywords,
+            'status' => 'draft'
+        ]);
+
+        return $this;
+    }
+
+    protected function validateState(): bool
+    {
+        return in_array($this->status, ['draft', 'review', 'published']) && 
+               ($this->status !== 'published' || $this->publish_at !== null);
+    }
+
+    protected function validateRelations(): bool
+    {
+        return $this->author()->exists() && 
+               $this->category()->exists() && 
+               $this->validateTags();
+    }
+
+    protected function validateContent(): bool
+    {
+        return strlen($this->title) <= 255 && 
+               strlen($this->meta_description ?? '') <= 160 && 
+               strlen($this->meta_keywords ?? '') <= 255;
+    }
+
+    protected function validateTags(): bool
+    {
+        if (!$this->tags()->exists()) {
+            return true;
+        }
+
+        return !$this->tags()
+            ->whereNull('id')
+            ->exists();
+    }
+
+    protected function getSearchableFields(): array
+    {
+        return [
+            'title' => 'text',
+            'body'

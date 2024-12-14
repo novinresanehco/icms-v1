@@ -1,0 +1,44 @@
+<?php
+
+namespace App\Core\CMS\Media\Processors;
+
+class ImageProcessor implements ImageProcessorInterface
+{
+    private array $config;
+    private SecurityService $security;
+    private ValidationService $validator;
+    private AuditLogger $logger;
+
+    private array $supportedFormats = ['jpg', 'jpeg', 'png', 'gif', 'webp'];
+    private array $supportedMimeTypes = [
+        'image/jpeg', 'image/png', 'image/gif', 'image/webp'
+    ];
+
+    public function process(UploadedFile $file, array $options = []): ProcessedFile
+    {
+        $operationId = uniqid('img_process_', true);
+
+        try {
+            // Validate image
+            $this->validateImage($file);
+
+            // Create image instance
+            $image = $this->createImage($file);
+
+            // Apply transformations
+            $image = $this->applyTransformations($image, $options);
+
+            // Optimize image
+            if ($options['optimize'] ?? true) {
+                $image = $this->optimizeImage($image, $options);
+            }
+
+            // Save processed image
+            $result = $this->saveProcessedImage($image, $options);
+
+            // Log success
+            $this->logSuccess($file, $result, $operationId);
+
+            return $result;
+
+        } catch (\Throwable $e

@@ -1,0 +1,157 @@
+<?php
+
+namespace App\Core\Monitoring;
+
+class MonitoringService implements MonitoringInterface
+{
+    private MetricsCollector $metrics;
+    private AlertManager $alerts;
+    private ThresholdManager $thresholds;
+    private LogManager $logger;
+
+    public function startOperation(string $type): string
+    {
+        $operationId = uniqid('op_', true);
+
+        // Initialize metrics
+        $this->metrics->initializeOperation($operationId, [
+            'type' => $type,
+            'start_time' => microtime(true),
+            'memory_start' => memory_get_usage(true)
+        ]);
+
+        return $operationId;
+    }
+
+    public function getCurrentMetrics(): array
+    {
+        return [
+            'memory' => memory_get_usage(true),
+            'cpu' => sys_getloadavg()[0],
+            'time' => microtime(true)
+        ];
+    }
+
+    public function trackMetrics(string $operationId, array $metrics): void
+    {
+        // Record metrics
+        $this->metrics->recordMetrics($operationId, $metrics);
+
+        // Check thresholds
+        $this->checkThresholds($operationId, $metrics);
+    }
+
+    public function alertFailure(string $operationId, \Exception $e): void
+    {
+        // Get metrics
+        $metrics = $this->metrics->getOperationMetrics($operationId);
+
+        // Send alert
+        $this->alerts->sendAlert([
+            'operation_id' => $operationId,
+            'error' => $e->getMessage(),
+            'metrics' => $metrics,
+            'time' => time()
+        ]);
+    }
+
+    public function resetState(string $operationId): void
+    {
+        // Reset metrics
+        $this->metrics->resetMetrics($operationId);
+
+        // Reset thresholds
+        $this->thresholds->resetThresholds();
+
+        // Clear operation state
+        $this->clearOperationState($operationId);
+    }
+
+    protected function checkThresholds(string $operationId, array $metrics): void
+    {
+        foreach ($metrics as $key => $value) {
+            $threshold = $this->thresholds->getThreshold($key);
+            if ($value > $threshold) {
+                $this->handleThresholdViolation($operationId, $key, $value, $threshold);
+            }
+        }
+    }
+
+    protected function handleThresholdViolation(
+        string $operationId,
+        string $metric,
+        $value,
+        $threshold
+    ): void {
+        // Log violation
+        $this->logger->logThresholdViolation($operationId, [
+            'metric' => $metric,
+            'value' => $value,
+            'threshold' => $threshold,
+            'time' => time()
+        ]);
+
+        // Send alert
+        $this->alerts->sendThresholdAlert($operationId, $metric, $value, $threshold);
+    }
+
+    protected function clearOperationState(string $operationId): void
+    {
+        // Clear metrics
+        $this->metrics->clearOperation($operationId);
+
+        // Clear alerts
+        $this->alerts->clearAlerts($operationId);
+
+        // Clear logs
+        $this->logger->clearLogs($operationId);
+    }
+}
+
+class MetricsCollector
+{
+    private array $metrics = [];
+
+    public function initializeOperation(string $operationId, array $initialData): void
+    {
+        $this->metrics[$operationId] = $initialData;
+    }
+
+    public function recordMetrics(string $operationId, array $metrics): void
+    {
+        if (!isset($this->metrics[$operationId])) {
+            throw new MonitoringException('Invalid operation ID');
+        }
+
+        $this->metrics[$operationId]['data'][] = array_merge(
+            $metrics,
+            ['timestamp' => microtime(true)]
+        );
+    }
+
+    public function getOperationMetrics(string $operationId): array
+    {
+        return $this->metrics[$operationId] ?? [];
+    }
+
+    public function resetMetrics(string $operationId): void
+    {
+        unset($this->metrics[$operationId]);
+    }
+
+    public function clearOperation(string $operationId): void
+    {
+        unset($this->metrics[$operationId]);
+    }
+}
+
+interface MonitoringInterface
+{
+    public function startOperation(string $type): string;
+    public function getCurrentMetrics(): array;
+    public function trackMetrics(string $operationId, array $metrics): void;
+    public function alertFailure(string $operationId, \Exception $e): void;
+    public function resetState(string $operationId): void;
+}
+
+class MonitoringException extends \Exception {}

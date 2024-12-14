@@ -1,0 +1,95 @@
+<?php
+
+namespace App\Core\Notification\Analytics\Verification;
+
+class DataVerifier
+{
+    private array $validators = [];
+    private array $constraints = [];
+    private array $metrics = [];
+
+    public function addValidator(string $type, callable $validator): void
+    {
+        $this->validators[$type] = $validator;
+    }
+
+    public function addConstraint(string $field, array $constraints): void
+    {
+        $this->constraints[$field] = $constraints;
+    }
+
+    public function verify(array $data): VerificationResult
+    {
+        $startTime = microtime(true);
+        $errors = [];
+        $warnings = [];
+
+        foreach ($data as $key => $value) {
+            $result = $this->verifyValue($key, $value);
+            if (!empty($result['errors'])) {
+                $errors[$key] = $result['errors'];
+            }
+            if (!empty($result['warnings'])) {
+                $warnings[$key] = $result['warnings'];
+            }
+        }
+
+        $this->recordMetrics(
+            'verify',
+            microtime(true) - $startTime,
+            count($data),
+            count($errors),
+            count($warnings)
+        );
+
+        return new VerificationResult(
+            empty($errors),
+            $errors,
+            $warnings
+        );
+    }
+
+    private function verifyValue($key, $value): array
+    {
+        $result = [
+            'errors' => [],
+            'warnings' => []
+        ];
+
+        $type = $this->determineType($value);
+        
+        if (isset($this->validators[$type])) {
+            try {
+                if (!($this->validators[$type])($value)) {
+                    $result['errors'][] = "Invalid value for type {$type}";
+                }
+            } catch (\Exception $e) {
+                $result['errors'][] = $e->getMessage();
+            }
+        }
+
+        if (isset($this->constraints[$key])) {
+            foreach ($this->constraints[$key] as $constraint => $params) {
+                try {
+                    if (!$this->validateConstraint($value, $constraint, $params)) {
+                        $result['errors'][] = "Failed constraint {$constraint}";
+                    }
+                } catch (\Exception $e) {
+                    $result['errors'][] = $e->getMessage();
+                }
+            }
+        }
+
+        return $result;
+    }
+
+    private function determineType($value): string
+    {
+        if (is_array($value)) return 'array';
+        if (is_numeric($value)) return 'numeric';
+        if (is_string($value)) return 'string';
+        if (is_bool($value)) return 'boolean';
+        return 'unknown';
+    }
+
+    private function validateConstraint($value, string

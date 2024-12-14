@@ -1,0 +1,111 @@
+<?php
+
+namespace App\Core\Notification\Analytics\Reporting;
+
+use App\Core\Notification\Analytics\NotificationAnalytics;
+use Illuminate\Support\Facades\Storage;
+use PhpOffice\PhpSpreadsheet\Spreadsheet;
+use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
+
+class AnalyticsReportGenerator
+{
+    private NotificationAnalytics $analytics;
+    private array $config;
+
+    public function __construct(NotificationAnalytics $analytics)
+    {
+        $this->analytics = $analytics;
+        $this->config = config('analytics.reporting');
+    }
+
+    public function generateDailyReport(): string
+    {
+        $data = $this->gatherDailyData();
+        return $this->generateReport('daily', $data);
+    }
+
+    public function generateWeeklyReport(): string
+    {
+        $data = $this->gatherWeeklyData();
+        return $this->generateReport('weekly', $data);
+    }
+
+    public function generateMonthlyReport(): string
+    {
+        $data = $this->gatherMonthlyData();
+        return $this->generateReport('monthly', $data);
+    }
+
+    public function generateCustomReport(array $metrics, array $filters): string
+    {
+        $data = $this->gatherCustomData($metrics, $filters);
+        return $this->generateReport('custom', $data);
+    }
+
+    private function gatherDailyData(): array
+    {
+        $performance = $this->analytics->analyzePerformance(['period' => 'today']);
+        $channels = $this->analytics->analyzeChannelEffectiveness(['period' => 'today']);
+        $segments = $this->analytics->analyzeUserSegments(['period' => 'today']);
+
+        return [
+            'summary' => $performance['summary'],
+            'channels' => $channels,
+            'segments' => $segments,
+            'metrics' => $this->calculateDailyMetrics($performance)
+        ];
+    }
+
+    private function generateReport(string $type, array $data): string
+    {
+        $spreadsheet = new Spreadsheet();
+        $sheet = $spreadsheet->getActiveSheet();
+
+        $this->writeHeader($sheet, $type);
+        $this->writeData($sheet, $data);
+        $this->formatSheet($sheet, $type);
+
+        $filename = $this->generateFilename($type);
+        $path = $this->saveSpreadsheet($spreadsheet, $filename);
+
+        return $path;
+    }
+
+    private function writeHeader($sheet, string $type): void
+    {
+        $headers = $this->config['headers'][$type];
+        foreach ($headers as $col => $header) {
+            $sheet->setCellValue($col . '1', $header);
+        }
+    }
+
+    private function writeData($sheet, array $data): void
+    {
+        $row = 2;
+        foreach ($data as $section => $items) {
+            foreach ($items as $item) {
+                $col = 'A';
+                foreach ($item as $value) {
+                    $sheet->setCellValue($col . $row, $value);
+                    $col++;
+                }
+                $row++;
+            }
+        }
+    }
+
+    private function formatSheet($sheet, string $type): void
+    {
+        $formatting = $this->config['formatting'][$type];
+        
+        foreach ($formatting as $range => $format) {
+            $sheet->getStyle($range)->applyFromArray($format);
+        }
+    }
+
+    private function generateFilename(string $type): string
+    {
+        return sprintf(
+            'notification_analytics_%s_%s.xlsx',
+            $type,
+            now()->format('Y_

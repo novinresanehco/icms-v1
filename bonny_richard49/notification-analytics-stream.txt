@@ -1,0 +1,122 @@
+<?php
+
+namespace App\Core\Notification\Analytics\Stream;
+
+class StreamProcessor
+{
+    private const BUFFER_SIZE = 1000;
+    private array $handlers = [];
+    private array $buffers = [];
+    private array $metrics = [];
+
+    public function registerHandler(string $streamId, callable $handler, array $options = []): void
+    {
+        $this->handlers[$streamId] = [
+            'handler' => $handler,
+            'options' => array_merge([
+                'buffer_size' => self::BUFFER_SIZE,
+                'batch_processing' => false,
+                'error_threshold' => 0.1
+            ], $options)
+        ];
+
+        $this->buffers[$streamId] = [];
+        $this->metrics[$streamId] = [
+            'processed' => 0,
+            'errors' => 0,
+            'last_processed' => null
+        ];
+    }
+
+    public function process(string $streamId, $data): void
+    {
+        if (!isset($this->handlers[$streamId])) {
+            throw new \InvalidArgumentException("No handler registered for stream: {$streamId}");
+        }
+
+        $handler = $this->handlers[$streamId];
+        $this->buffers[$streamId][] = $data;
+
+        if (count($this->buffers[$streamId]) >= $handler['options']['buffer_size']) {
+            $this->processBuffer($streamId);
+        }
+    }
+
+    public function flush(string $streamId): void
+    {
+        if (!empty($this->buffers[$streamId])) {
+            $this->processBuffer($streamId);
+        }
+    }
+
+    public function flushAll(): void
+    {
+        foreach (array_keys($this->buffers) as $streamId) {
+            $this->flush($streamId);
+        }
+    }
+
+    public function getMetrics(string $streamId): array
+    {
+        if (!isset($this->metrics[$streamId])) {
+            throw new \InvalidArgumentException("No metrics found for stream: {$streamId}");
+        }
+
+        return $this->metrics[$streamId];
+    }
+
+    private function processBuffer(string $streamId): void
+    {
+        $buffer = $this->buffers[$streamId];
+        $handler = $this->handlers[$streamId];
+        $errors = 0;
+
+        if ($handler['options']['batch_processing']) {
+            try {
+                ($handler['handler'])($buffer);
+                $this->metrics[$streamId]['processed'] += count($buffer);
+            } catch (\Exception $e) {
+                $this->handleError($streamId, $e, count($buffer));
+                $errors = count($buffer);
+            }
+        } else {
+            foreach ($buffer as $item) {
+                try {
+                    ($handler['handler'])($item);
+                    $this->metrics[$streamId]['processed']++;
+                } catch (\Exception $e) {
+                    $this->handleError($streamId, $e);
+                    $errors++;
+                }
+            }
+        }
+
+        $this->checkErrorThreshold($streamId, $errors, count($buffer));
+        $this->buffers[$streamId] = [];
+        $this->metrics[$streamId]['last_processed'] = time();
+    }
+
+    private function handleError(string $streamId, \Exception $error, int $count = 1): void
+    {
+        $this->metrics[$streamId]['errors'] += $count;
+        
+        event(new StreamProcessingError(
+            $streamId,
+            $error->getMessage(),
+            $error->getTraceAsString(),
+            $count
+        ));
+    }
+
+    private function checkErrorThreshold(string $streamId, int $errors, int $total): void
+    {
+        $errorRate = $total > 0 ? $errors / $total : 0;
+        $threshold = $this->handlers[$streamId]['options']['error_threshold'];
+
+        if ($errorRate > $threshold) {
+            event(new StreamErrorThresholdExceeded(
+                $streamId,
+                $errorRate,
+                $threshold
+            ));
+        }

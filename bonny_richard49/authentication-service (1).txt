@@ -1,0 +1,158 @@
+<?php
+
+namespace App\Services;
+
+use App\Core\Services\BaseService;
+use App\Core\Auth\AuthenticationManager;
+use App\Core\Security\SecurityManager;
+use App\Core\Events\EventDispatcher;
+use App\Core\Cache\CacheManager;
+
+class AuthenticationService extends BaseService
+{
+    protected AuthenticationManager $authManager;
+    protected CacheManager $cache;
+
+    public function __construct(
+        AuthenticationManager $authManager,
+        SecurityManager $security,
+        EventDispatcher $events,
+        CacheManager $cache
+    ) {
+        parent::__construct($security, $events);
+        $this->authManager = $authManager;
+        $this->cache = $cache;
+    }
+
+    public function login(array $credentials): AuthToken
+    {
+        return $this->executeOperation('auth.login', function() use ($credentials) {
+            $this->validateCredentials($credentials);
+            return $this->authManager->authenticate($credentials);
+        });
+    }
+
+    public function logout(string $token): void
+    {
+        $this->executeOperation('auth.logout', function() use ($token) {
+            $this->authManager->logout($token);
+        });
+    }
+
+    public function validateToken(string $token): bool
+    {
+        return $this->executeOperation('auth.validate_token', function() use ($token) {
+            return $this->authManager->validateToken($token);
+        });
+    }
+
+    public function refreshToken(string $token): AuthToken
+    {
+        return $this->executeOperation('auth.refresh_token', function() use ($token) {
+            return $this->authManager->refreshToken($token);
+        });
+    }
+
+    public function validate2FA(string $token, string $code): bool
+    {
+        return $this->executeOperation('auth.validate_2fa', function() use ($token, $code) {
+            $decoded = $this->security->decryptPayload($token);
+            $user = User::findOrFail($decoded['sub']);
+            return $user->validate2FACode($code);
+        });
+    }
+
+    public function setup2FA(User $user): array
+    {
+        return $this->executeOperation('auth.setup_2fa', function() use ($user) {
+            $secret = $this->generate2FASecret();
+            $user->update2FASecret($secret);
+            return [
+                'secret' => $secret,
+                'qr_code' => $this->generate2FAQRCode($user, $secret)
+            ];
+        });
+    }
+
+    public function disable2FA(User $user, string $code): bool
+    {
+        return $this->executeOperation('auth.disable_2fa', function() use ($user, $code) {
+            if (!$user->validate2FACode($code)) {
+                throw new AuthException('Invalid 2FA code');
+            }
+            return $user->disable2FA();
+        });
+    }
+
+    protected function validateCredentials(array $credentials): void
+    {
+        $rules = [
+            'username' => 'required|string',
+            'password' => 'required|string|min:8'
+        ];
+
+        if (!$this->validator->validate($credentials, $rules)) {
+            throw new ValidationException('Invalid credentials format');
+        }
+    }
+
+    protected function validateOperation(string $operation): void
+    {
+        parent::validateOperation($operation);
+
+        switch ($operation) {
+            case 'auth.login':
+                $this->validateLoginAttempts();
+                break;
+            
+            case 'auth.refresh_token':
+                $this->validateRefreshQuota();
+                break;
+            
+            case 'auth.setup_2fa':
+                $this->validate2FASetup();
+                break;
+        }
+    }
+
+    private function validateLoginAttempts(): void
+    {
+        $ip = request()->ip();
+        $key = "login_attempts_ip:{$ip}";
+        $attempts = (int)$this->cache->get($key, 0);
+
+        if ($attempts >= config('auth.max_ip_attempts', 100)) {
+            throw new AuthException('Too many login attempts from this IP');
+        }
+    }
+
+    private function validateRefreshQuota(): void
+    {
+        $ip = request()->ip();
+        $key = "token_refreshes_ip:{$ip}";
+        $refreshes = (int)$this->cache->get($key, 0);
+
+        if ($refreshes >= config('auth.max_token_refreshes', 100)) {
+            throw new AuthException('Token refresh quota exceeded');
+        }
+    }
+
+    private function validate2FASetup(): void
+    {
+        if (!config('auth.2fa_enabled')) {
+            throw new AuthException('2FA is not enabled');
+        }
+    }
+
+    private function generate2FASecret(): string
+    {
+        return $this->security->generateSecureRandomString(32);
+    }
+
+    private function generate2FAQRCode(User $user, string $secret): string
+    {
+        $issuer = config('app.name');
+        $label = $user->email;
+        return "otpauth://totp/{$issuer}:{$label}?secret={$secret}&issuer={$issuer}";
+    }
+}

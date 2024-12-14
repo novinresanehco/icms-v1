@@ -1,0 +1,154 @@
+<?php
+
+namespace App\Core\Security;
+
+class AuditService implements AuditInterface
+{
+    private LogManager $logger;
+    private AlertManager $alerts;
+    private MonitoringService $monitor;
+    private array $config;
+
+    public function logSecurityEvent(string $type, array $data): void
+    {
+        try {
+            // Generate audit record
+            $record = $this->createAuditRecord($type, $data);
+
+            // Log record
+            $this->logger->logSecurityEvent($record);
+
+            // Check severity
+            if ($this->isCriticalEvent($type)) {
+                $this->handleCriticalEvent($record);
+            }
+
+            // Monitor patterns
+            $this->monitor->trackSecurityEvent($record);
+
+        } catch (\Exception $e) {
+            $this->handleAuditFailure($e);
+            throw new AuditException('Failed to log security event', 0, $e);
+        }
+    }
+
+    public function logAccessAttempt(array $data): void
+    {
+        try {
+            // Create access record
+            $record = $this->createAccessRecord($data);
+
+            // Log attempt
+            $this->logger->logAccessAttempt($record);
+
+            // Check for suspicious patterns
+            if ($this->isSuspiciousAccess($record)) {
+                $this->handleSuspiciousAccess($record);
+            }
+
+            // Update access metrics
+            $this->monitor->updateAccessMetrics($record);
+
+        } catch (\Exception $e) {
+            $this->handleAuditFailure($e);
+            throw new AuditException('Failed to log access attempt', 0, $e);
+        }
+    }
+
+    public function logValidationFailure(string $validationId, array $data): void
+    {
+        try {
+            // Create validation record
+            $record = $this->createValidationRecord($validationId, $data);
+
+            // Log failure
+            $this->logger->logValidationFailure($record);
+
+            // Alert on validation failure
+            $this->alerts->sendValidationAlert($record);
+
+            // Update failure metrics
+            $this->monitor->updateFailureMetrics($record);
+
+        } catch (\Exception $e) {
+            $this->handleAuditFailure($e);
+            throw new AuditException('Failed to log validation failure', 0, $e);
+        }
+    }
+
+    private function createAuditRecord(string $type, array $data): array
+    {
+        return [
+            'type' => $type,
+            'data' => $data,
+            'timestamp' => microtime(true),
+            'context' => $this->getAuditContext()
+        ];
+    }
+
+    private function createAccessRecord(array $data): array
+    {
+        return [
+            'timestamp' => microtime(true),
+            'ip' => $data['ip'] ?? '',
+            'user' => $data['user'] ?? '',
+            'resource' => $data['resource'] ?? '',
+            'result' => $data['result'] ?? '',
+            'context' => $this->getAccessContext()
+        ];
+    }
+
+    private function createValidationRecord(string $validationId, array $data): array
+    {
+        return [
+            'validation_id' => $validationId,
+            'error' => $data['error'] ?? '',
+            'context' => $data['context'] ?? [],
+            'timestamp' => microtime(true),
+            'metrics' => $this->monitor->getCurrentMetrics()
+        ];
+    }
+
+    private function isCriticalEvent(string $type): bool
+    {
+        return in_array($type, $this->config['critical_events']);
+    }
+
+    private function isSuspiciousAccess(array $record): bool
+    {
+        return $this->monitor->detectSuspiciousPattern($record);
+    }
+
+    private function handleCriticalEvent(array $record): void
+    {
+        // Send critical alert
+        $this->alerts->sendCriticalAlert([
+            'type' => 'security_event',
+            'record' => $record
+        ]);
+
+        // Update threat metrics
+        $this->monitor->updateThreatMetrics($record);
+    }
+
+    private function handleSuspiciousAccess(array $record): void
+    {
+        // Send suspicious access alert
+        $this->alerts->sendSecurityAlert([
+            'type' => 'suspicious_access',
+            'record' => $record
+        ]);
+
+        // Update threat metrics
+        $this->monitor->updateThreatMetrics($record);
+    }
+
+    private function handleAuditFailure(\Exception $e): void
+    {
+        // Log error
+        error_log("Audit failure: {$e->getMessage()}");
+
+        // Send alert
+        $this->alerts->sendSystemAlert([
+            'type' => 'audit_failure',
+            'error' => $e

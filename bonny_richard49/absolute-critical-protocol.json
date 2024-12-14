@@ -1,0 +1,144 @@
+CRITICAL_EXECUTION_PROTOCOL = {
+    "ABSOLUTE_PRIORITIES": {
+        "PHASE_1_SECURITY": {
+            "TIMELINE": "DAY_1",
+            "EXECUTOR": "SENIOR_DEV_1",
+            "CRITICALITY": "MAXIMUM",
+            "CORE_TASKS": [
+                {
+                    "AUTHENTICATION": {
+                        "TIME": "0800-1200",
+                        "STATUS": "CRITICAL",
+                        "VALIDATION": "REAL_TIME",
+                        "REQUIREMENTS": [
+                            "MULTI_FACTOR_AUTH",
+                            "TOKEN_VALIDATION",
+                            "SESSION_MANAGEMENT",
+                            "BREACH_DETECTION"
+                        ]
+                    }
+                },
+                {
+                    "AUTHORIZATION": {
+                        "TIME": "1300-1700",
+                        "STATUS": "CRITICAL",
+                        "VALIDATION": "CONTINUOUS",
+                        "REQUIREMENTS": [
+                            "ROLE_BASED_ACCESS",
+                            "PERMISSION_SYSTEM",
+                            "ACCESS_CONTROL",
+                            "AUDIT_LOGGING"
+                        ]
+                    }
+                }
+            ]
+        },
+
+        "PHASE_2_CMS": {
+            "TIMELINE": "DAY_2",
+            "EXECUTOR": "SENIOR_DEV_2",
+            "CRITICALITY": "MAXIMUM",
+            "CORE_TASKS": [
+                {
+                    "CONTENT_MANAGEMENT": {
+                        "TIME": "0800-1200",
+                        "STATUS": "CRITICAL",
+                        "VALIDATION": "CONTINUOUS",
+                        "REQUIREMENTS": [
+                            "SECURITY_INTEGRATION",
+                            "DATA_VALIDATION",
+                            "VERSION_CONTROL",
+                            "AUDIT_TRAILS"
+                        ]
+                    }
+                },
+                {
+                    "DATA_PROTECTION": {
+                        "TIME": "1300-1700",
+                        "STATUS": "CRITICAL",
+                        "VALIDATION": "REAL_TIME",
+                        "REQUIREMENTS": [
+                            "ENCRYPTION_LAYER",
+                            "DATA_INTEGRITY",
+                            "ACCESS_CONTROL",
+                            "BACKUP_SYSTEM"
+                        ]
+                    }
+                }
+            ]
+        },
+
+        "PHASE_3_INFRASTRUCTURE": {
+            "TIMELINE": "DAY_3",
+            "EXECUTOR": "DEV_3",
+            "CRITICALITY": "MAXIMUM",
+            "CORE_TASKS": [
+                {
+                    "PERFORMANCE": {
+                        "TIME": "0800-1200",
+                        "STATUS": "CRITICAL",
+                        "VALIDATION": "CONTINUOUS",
+                        "REQUIREMENTS": [
+                            "RESPONSE_TIME<100ms",
+                            "CPU_USAGE<70%",
+                            "MEMORY_USAGE<80%",
+                            "ERROR_RATE<0.01%"
+                        ]
+                    }
+                },
+                {
+                    "RELIABILITY": {
+                        "TIME": "1300-1700",
+                        "STATUS": "CRITICAL",
+                        "VALIDATION": "REAL_TIME",
+                        "REQUIREMENTS": [
+                            "FAILOVER_SYSTEM",
+                            "LOAD_BALANCING",
+                            "DATA_REPLICATION",
+                            "BACKUP_STRATEGY"
+                        ]
+                    }
+                }
+            ]
+        }
+    },
+
+    "VALIDATION_GATES": {
+        "SECURITY_VALIDATION": {
+            "AUTHENTICATION": "REAL_TIME_CHECK",
+            "AUTHORIZATION": "CONTINUOUS_MONITOR",
+            "ENCRYPTION": "INTEGRITY_VERIFY",
+            "AUDIT": "COMPLETE_LOGGING"
+        },
+        "PERFORMANCE_VALIDATION": {
+            "RESPONSE_TIME": "CONTINUOUS_CHECK",
+            "RESOURCE_USAGE": "REAL_TIME_MONITOR",
+            "ERROR_RATES": "IMMEDIATE_ALERT",
+            "SCALABILITY": "LOAD_TESTING"
+        },
+        "CODE_VALIDATION": {
+            "STANDARDS": "PSR_12",
+            "TESTING": "100%_COVERAGE",
+            "SECURITY": "AUTOMATED_SCAN",
+            "REVIEW": "SENIOR_APPROVAL"
+        }
+    },
+
+    "ERROR_PREVENTION": {
+        "MONITORING": {
+            "SYSTEM": "REAL_TIME",
+            "SECURITY": "CONTINUOUS",
+            "PERFORMANCE": "AUTOMATED"
+        },
+        "ALERTS": {
+            "CRITICAL": "IMMEDIATE",
+            "ERROR": "REAL_TIME",
+            "WARNING": "PROMPT"
+        },
+        "RESPONSE": {
+            "CRITICAL": "IMMEDIATE",
+            "ERROR": "<5min",
+            "WARNING": "<15min"
+        }
+    }
+}

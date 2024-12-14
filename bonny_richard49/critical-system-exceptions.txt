@@ -1,0 +1,52 @@
+// app/Core/Exceptions/System/SystemException.php
+<?php
+
+namespace App\Core\Exceptions\System;
+
+class SystemException extends \Exception
+{
+    protected array $systemContext = [];
+    protected string $severity = 'critical';
+    protected bool $recoverable = false;
+
+    public function __construct(
+        string $message = "",
+        array $systemContext = [],
+        int $code = 0,
+        \Throwable $previous = null
+    ) {
+        parent::__construct($message, $code, $previous);
+        $this->systemContext = $systemContext;
+    }
+
+    public function getSystemContext(): array
+    {
+        return array_merge($this->systemContext, [
+            'exception' => [
+                'class' => static::class,
+                'message' => $this->getMessage(),
+                'code' => $this->getCode(),
+                'severity' => $this->severity,
+                'recoverable' => $this->recoverable
+            ],
+            'system' => [
+                'memory_usage' => memory_get_usage(true),
+                'load_average' => sys_getloadavg(),
+                'timestamp' => microtime(true)
+            ]
+        ]);
+    }
+
+    public function getSeverity(): string
+    {
+        return $this->severity;
+    }
+
+    public function isRecoverable(): bool
+    {
+        return $this->recoverable;
+    }
+}
+
+// app/Core/Exceptions/System/DatabaseException.php
+class DatabaseException extends

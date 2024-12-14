@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+            line-height: 1.6;
+            margin: 0;
+            padding: 0;
+            background-color: #f8f9fa;
+        }
+        .container {
+            max-width: 600px;
+            margin: 20px auto;
+            background-color: #ffffff;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            padding: 20px;
+        }
+        .header {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        .logo {
+            max-height: 50px;
+            margin-bottom: 20px;
+        }
+        .alert-badge {
+            display: inline-block;
+            padding: 8px 16px;
+            border-radius: 4px;
+            font-weight: 600;
+            margin-bottom: 20px;
+        }
+        .alert-critical {
+            background-color: #ffebee;
+            color: #c62828;
+        }
+        .alert-warning {
+            background-color: #fff3e0;
+            color: #ef6c00;
+        }
+        .alert-info {
+            background-color: #e3f2fd;
+            color: #1565c0;
+        }
+        .content {
+            margin-bottom: 30px;
+        }
+        .data-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 20px 0;
+        }
+        .data-table th, .data-table td {
+            padding: 12px;
+            text-align: left;
+            border-bottom: 1px solid #eee;
+        }
+        .data-table th {
+            background-color: #f8f9fa;
+        }
+        .metadata {
+            font-size: 0.9em;
+            color: #666;
+            margin-top: 30px;
+            padding-top: 20px;
+            border-top: 1px solid #eee;
+        }
+        .signature {
+            margin-top: 30px;
+            padding-top: 20px;
+            border-top: 1px solid #eee;
+        }
+        .footer {
+            text-align: center;
+            margin-top: 30px;
+            padding-top: 20px;
+            border-top: 1px solid #eee;
+            font-size: 0.8em;
+            color: #666;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            @if($logo_url)
+                <img src="{{ $logo_url }}" alt="Logo" class="logo">
+            @endif
+            <div class="alert-badge alert-{{ $severity }}">
+                {{ ucfirst($severity) }} Alert
+            </div>
+        </div>
+
+        <div class="content">
+            {!! nl2br(e($content)) !!}
+        </div>
+
+        @if(!empty($data))
+            <table class="data-table">
+                <tbody>
+                    @foreach($data as $label => $value)
+                        <tr>
+                            <th>{{ $label }}</th>
+                            <td>{{ is_array($value) ? json_encode($value) : $value }}</td>
+                        </tr>
+                    @endforeach
+                </tbody>
+            </table>
+        @endif
+
+        @if(!empty($metadata))
+            <div class="metadata">
+                <p>Alert Details:</p>
+                <ul>
+                    @foreach($metadata as $key => $value)
+                        <li>{{ ucwords(str_replace('_', ' ', $key)) }}: {{ $value }}</li>
+                    @endforeach
+                </ul>
+            </div>
+        @endif
+
+        @if($signature)
+            <div class="signature">
+                {!! nl2br(e($signature)) !!}
+            </div>
+        @endif
+
+        <div class="footer">
+            {{ $footer_text }}
+        </div>
+    </div>
+</body>
+</html>

@@ -1,0 +1,29 @@
+<?php
+
+namespace App\Core\Notification\Analytics\Transformation;
+
+class DataTransformer
+{
+    private array $transformers = [];
+    private array $pipeline = [];
+    private array $metrics = [];
+
+    public function registerTransformer(string $name, TransformerInterface $transformer): void
+    {
+        $this->transformers[$name] = $transformer;
+    }
+
+    public function addToPipeline(string $transformer, array $config = []): void
+    {
+        if (!isset($this->transformers[$transformer])) {
+            throw new \InvalidArgumentException("Unknown transformer: {$transformer}");
+        }
+
+        $this->pipeline[] = [
+            'transformer' => $transformer,
+            'config' => $config
+        ];
+    }
+
+    public function transform(array $data): array
+    

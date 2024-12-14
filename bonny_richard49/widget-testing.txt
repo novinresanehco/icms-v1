@@ -1,0 +1,149 @@
+// tests/Unit/Widget/Repositories/WidgetRepositoryTest.php
+<?php
+
+namespace Tests\Unit\Widget\Repositories;
+
+use Tests\TestCase;
+use App\Core\Widget\Repositories\WidgetRepository;
+use App\Core\Widget\Models\Widget;
+use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Cache;
+
+class WidgetRepositoryTest extends TestCase
+{
+    use RefreshDatabase;
+
+    private WidgetRepository $repository;
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+        $this->repository = new WidgetRepository();
+    }
+
+    public function test_can_create_widget(): void
+    {
+        $data = [
+            'name' => 'Test Widget',
+            'identifier' => 'test-widget',
+            'type' => 'content',
+            'area' => 'sidebar',
+            'settings' => ['foo' => 'bar'],
+            'is_active' => true
+        ];
+
+        $widget = $this->repository->create($data);
+
+        $this->assertDatabaseHas('widgets', [
+            'id' => $widget->id,
+            'name' => 'Test Widget'
+        ]);
+    }
+
+    public function test_can_update_widget(): void
+    {
+        $widget = Widget::factory()->create();
+
+        $updated = $this->repository->update($widget->id, [
+            'name' => 'Updated Widget'
+        ]);
+
+        $this->assertEquals('Updated Widget', $updated->name);
+        $this->assertDatabaseHas('widgets', [
+            'id' => $widget->id,
+            'name' => 'Updated Widget'
+        ]);
+    }
+
+    public function test_can_delete_widget(): void
+    {
+        $widget = Widget::factory()->create();
+
+        $result = $this->repository->delete($widget->id);
+
+        $this->assertTrue($result);
+        $this->assertDatabaseMissing('widgets', [
+            'id' => $widget->id,
+            'deleted_at' => null
+        ]);
+    }
+
+    public function test_can_find_widget_by_identifier(): void
+    {
+        $widget = Widget::factory()->create();
+
+        $found = $this->repository->findByIdentifier($widget->identifier);
+
+        $this->assertNotNull($found);
+        $this->assertEquals($widget->id, $found->id);
+    }
+
+    public function test_can_find_widgets_by_area(): void
+    {
+        Widget::factory()->count(3)->create(['area' => 'sidebar']);
+        Widget::factory()->count(2)->create(['area' => 'footer']);
+
+        $sidebarWidgets = $this->repository->findByArea('sidebar');
+        $footerWidgets = $this->repository->findByArea('footer');
+
+        $this->assertCount(3, $sidebarWidgets);
+        $this->assertCount(2, $footerWidgets);
+    }
+
+    public function test_can_get_active_widgets(): void
+    {
+        Widget::factory()->count(2)->create(['is_active' => true]);
+        Widget::factory()->create(['is_active' => false]);
+
+        $activeWidgets = $this->repository->getActive();
+
+        $this->assertCount(2, $activeWidgets);
+    }
+
+    public function test_can_update_widget_order(): void
+    {
+        $widgets = Widget::factory()->count(3)->create();
+        
+        $order = $widgets->pluck('id')->flip()->toArray();
+
+        $this->repository->updateOrder($order);
+
+        foreach ($order as $id => $position) {
+            $this->assertDatabaseHas('widgets', [
+                'id' => $id,
+                'order' => $position
+            ]);
+        }
+    }
+
+    public function test_can_search_widgets(): void
+    {
+        Widget::factory()->create([
+            'name' => 'Test Widget',
+            'type' => 'content',
+            'area' => 'sidebar'
+        ]);
+
+        Widget::factory()->create([
+            'name' => 'Another Widget',
+            'type' => 'menu',
+            'area' => 'footer'
+        ]);
+
+        $results = $this->repository->search([
+            'keyword' => 'Test',
+            'type' => 'content'
+        ]);
+
+        $this->assertCount(1, $results);
+        $this->assertEquals('Test Widget', $results->first()->name);
+    }
+
+    public function test_clears_cache_on_widget_changes(): void
+    {
+        Cache::shouldReceive('tags')
+            ->with(['widgets'])
+            ->once()
+            ->andReturnSelf();
+
+        Cache::shoul

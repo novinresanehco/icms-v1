@@ -1,0 +1,216 @@
+// app/Core/Widget/Types/BaseWidgetType.php
+<?php
+
+namespace App\Core\Widget\Types;
+
+use App\Core\Widget\Models\Widget;
+use Illuminate\Contracts\View\View;
+use Illuminate\Support\Facades\Cache;
+
+abstract class BaseWidgetType
+{
+    protected Widget $widget;
+
+    public function __construct(Widget $widget)
+    {
+        $this->widget = $widget;
+    }
+
+    abstract public function render(): View;
+
+    abstract public function getDefaultSettings(): array;
+
+    protected function getCacheKey(): string
+    {
+        return "widget:{$this->widget->id}:rendered";
+    }
+
+    protected function getCacheDuration(): int
+    {
+        return $this->widget->cache_ttl ?? 3600;
+    }
+
+    protected function renderCached(): string
+    {
+        if (!$this->widget->cache_ttl) {
+            return $this->render()->render();
+        }
+
+        return Cache::remember(
+            $this->getCacheKey(),
+            $this->getCacheDuration(),
+            fn() => $this->render()->render()
+        );
+    }
+
+    protected function clearCache(): void
+    {
+        Cache::forget($this->getCacheKey());
+    }
+}
+
+// app/Core/Widget/Types/ContentWidget.php
+<?php
+
+namespace App\Core\Widget\Types;
+
+use Illuminate\Contracts\View\View;
+
+class ContentWidget extends BaseWidgetType
+{
+    public function render(): View
+    {
+        return view('widgets.content', [
+            'widget' => $this->widget,
+            'content' => $this->getContent(),
+            'settings' => $this->widget->settings
+        ]);
+    }
+
+    public function getDefaultSettings(): array
+    {
+        return [
+            'display_title' => true,
+            'content_type' => 'html',
+            'max_items' => 5,
+            'show_date' => true,
+            'show_author' => true
+        ];
+    }
+
+    protected function getContent(): array
+    {
+        $query = app('content')
+            ->type($this->widget->settings['content_type'] ?? 'post')
+            ->published()
+            ->latest();
+
+        if (isset($this->widget->settings['max_items'])) {
+            $query->limit($this->widget->settings['max_items']);
+        }
+
+        return $query->get()->toArray();
+    }
+}
+
+// app/Core/Widget/Types/MenuWidget.php
+<?php
+
+namespace App\Core\Widget\Types;
+
+use Illuminate\Contracts\View\View;
+
+class MenuWidget extends BaseWidgetType
+{
+    public function render(): View
+    {
+        return view('widgets.menu', [
+            'widget' => $this->widget,
+            'menu_items' => $this->getMenuItems(),
+            'settings' => $this->widget->settings
+        ]);
+    }
+
+    public function getDefaultSettings(): array
+    {
+        return [
+            'menu_id' => null,
+            'depth' => 1,
+            'show_description' => false,
+            'class' => 'menu-widget'
+        ];
+    }
+
+    protected function getMenuItems(): array
+    {
+        $menuId = $this->widget->settings['menu_id'] ?? null;
+        
+        if (!$menuId) {
+            return [];
+        }
+
+        return app('menu')
+            ->items($menuId)
+            ->depth($this->widget->settings['depth'] ?? 1)
+            ->toArray();
+    }
+}
+
+// app/Core/Widget/Types/SocialWidget.php
+<?php
+
+namespace App\Core\Widget\Types;
+
+use Illuminate\Contracts\View\View;
+
+class SocialWidget extends BaseWidgetType
+{
+    public function render(): View
+    {
+        return view('widgets.social', [
+            'widget' => $this->widget,
+            'networks' => $this->getSocialNetworks(),
+            'settings' => $this->widget->settings
+        ]);
+    }
+
+    public function getDefaultSettings(): array
+    {
+        return [
+            'networks' => [
+                'facebook' => '',
+                'twitter' => '',
+                'instagram' => '',
+                'linkedin' => ''
+            ],
+            'show_icons' => true,
+            'show_labels' => true,
+            'target' => '_blank'
+        ];
+    }
+
+    protected function getSocialNetworks(): array
+    {
+        return array_filter($this->widget->settings['networks'] ?? []);
+    }
+}
+
+// app/Core/Widget/Types/CustomWidget.php
+<?php
+
+namespace App\Core\Widget\Types;
+
+use Illuminate\Contracts\View\View;
+
+class CustomWidget extends BaseWidgetType
+{
+    public function render(): View
+    {
+        return view('widgets.custom', [
+            'widget' => $this->widget,
+            'content' => $this->getCustomContent(),
+            'settings' => $this->widget->settings
+        ]);
+    }
+
+    public function getDefaultSettings(): array
+    {
+        return [
+            'template' => 'default',
+            'cache' => true,
+            'wrapper_class' => 'custom-widget',
+            'data' => []
+        ];
+    }
+
+    protected function getCustomContent(): mixed
+    {
+        $handler = $this->widget->settings['handler'] ?? null;
+
+        if (!$handler || !class_exists($handler)) {
+            return null;
+        }
+
+        return app($handler)->handle($this->widget);
+    }
+}

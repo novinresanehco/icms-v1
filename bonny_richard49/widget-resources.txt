@@ -1,0 +1,128 @@
+// app/Core/Widget/Resources/WidgetResource.php
+<?php
+
+namespace App\Core\Widget\Resources;
+
+use Illuminate\Http\Resources\Json\JsonResource;
+
+class WidgetResource extends JsonResource
+{
+    public function toArray($request): array
+    {
+        return [
+            'id' => $this->id,
+            'name' => $this->name,
+            'identifier' => $this->identifier,
+            'type' => $this->type,
+            'area' => $this->area,
+            'settings' => $this->settings,
+            'order' => $this->order,
+            'is_active' => $this->is_active,
+            'cache_ttl' => $this->cache_ttl,
+            'visibility_rules' => $this->visibility_rules,
+            'permissions' => $this->permissions,
+            'metadata' => $this->metadata,
+            'created_at' => $this->created_at?->toIso8601String(),
+            'updated_at' => $this->updated_at?->toIso8601String(),
+        ];
+    }
+}
+
+// app/Core/Widget/Resources/WidgetCollectionResource.php
+<?php
+
+namespace App\Core\Widget\Resources;
+
+use Illuminate\Http\Resources\Json\ResourceCollection;
+
+class WidgetCollectionResource extends ResourceCollection
+{
+    public function toArray($request): array
+    {
+        return [
+            'data' => WidgetResource::collection($this->collection),
+            'meta' => [
+                'total' => $this->collection->count(),
+                'areas' => $this->collection->pluck('area')->unique()->values(),
+                'types' => $this->collection->pluck('type')->unique()->values(),
+            ],
+        ];
+    }
+}
+
+// app/Core/Widget/Resources/WidgetMetricsResource.php
+<?php
+
+namespace App\Core\Widget\Resources;
+
+use Illuminate\Http\Resources\Json\JsonResource;
+
+class WidgetMetricsResource extends JsonResource
+{
+    public function toArray($request): array
+    {
+        return [
+            'widget_id' => $this->widget_id,
+            'metrics' => [
+                'views' => [
+                    'total' => $this->total_views,
+                    'unique' => $this->unique_views,
+                ],
+                'performance' => [
+                    'load_time' => [
+                        'average' => round($this->avg_load_time, 2),
+                        'max' => round($this->max_load_time, 2),
+                    ],
+                    'memory_usage' => [
+                        'average' => round($this->avg_memory_usage, 2),
+                        'peak' => round($this->peak_memory_usage, 2),
+                    ],
+                ],
+                'cache' => [
+                    'hits' => $this->cache_hits,
+                    'misses' => $this->cache_misses,
+                    'ratio' => $this->calculateCacheRatio(),
+                ],
+            ],
+            'period' => [
+                'start' => $this->period_start?->toIso8601String(),
+                'end' => $this->period_end?->toIso8601String(),
+            ],
+        ];
+    }
+
+    protected function calculateCacheRatio(): float
+    {
+        $total = $this->cache_hits + $this->cache_misses;
+        if ($total === 0) {
+            return 0;
+        }
+        return round(($this->cache_hits / $total) * 100, 2);
+    }
+}
+
+// app/Core/Widget/Resources/WidgetStateResource.php
+<?php
+
+namespace App\Core\Widget\Resources;
+
+use Illuminate\Http\Resources\Json\JsonResource;
+
+class WidgetStateResource extends JsonResource
+{
+    public function toArray($request): array
+    {
+        return [
+            'id' => $this->id,
+            'widget_id' => $this->widget_id,
+            'type' => $this->type,
+            'state_data' => $this->state_data,
+            'changes' => $this->changes,
+            'user_id' => $this->user_id,
+            'created_at' => $this->created_at?->toIso8601String(),
+            'metadata' => [
+                'ip_address' => $this->metadata['ip_address'] ?? null,
+                'user_agent' => $this->metadata['user_agent'] ?? null,
+            ],
+        ];
+    }

@@ -1,0 +1,197 @@
+// app/Core/Widget/DTO/WidgetDTO.php
+<?php
+
+namespace App\Core\Widget\DTO;
+
+use App\Core\Widget\Models\Widget;
+use JsonSerializable;
+
+class WidgetDTO implements JsonSerializable
+{
+    public function __construct(
+        public readonly string $name,
+        public readonly string $identifier,
+        public readonly string $type,
+        public readonly string $area,
+        public readonly array $settings = [],
+        public readonly bool $isActive = true,
+        public readonly ?int $order = null,
+        public readonly ?int $cacheTtl = null,
+        public readonly array $visibilityRules = [],
+        public readonly array $permissions = [],
+        public readonly array $metadata = []
+    ) {}
+
+    public static function fromModel(Widget $widget): self
+    {
+        return new self(
+            name: $widget->name,
+            identifier: $widget->identifier,
+            type: $widget->type,
+            area: $widget->area,
+            settings: $widget->settings ?? [],
+            isActive: $widget->is_active,
+            order: $widget->order,
+            cacheTtl: $widget->cache_ttl,
+            visibilityRules: $widget->visibility_rules ?? [],
+            permissions: $widget->permissions ?? [],
+            metadata: $widget->metadata ?? []
+        );
+    }
+
+    public static function fromArray(array $data): self
+    {
+        return new self(
+            name: $data['name'],
+            identifier: $data['identifier'],
+            type: $data['type'],
+            area: $data['area'],
+            settings: $data['settings'] ?? [],
+            isActive: $data['is_active'] ?? true,
+            order: $data['order'] ?? null,
+            cacheTtl: $data['cache_ttl'] ?? null,
+            visibilityRules: $data['visibility_rules'] ?? [],
+            permissions: $data['permissions'] ?? [],
+            metadata: $data['metadata'] ?? []
+        );
+    }
+
+    public function toArray(): array
+    {
+        return [
+            'name' => $this->name,
+            'identifier' => $this->identifier,
+            'type' => $this->type,
+            'area' => $this->area,
+            'settings' => $this->settings,
+            'is_active' => $this->isActive,
+            'order' => $this->order,
+            'cache_ttl' => $this->cacheTtl,
+            'visibility_rules' => $this->visibilityRules,
+            'permissions' => $this->permissions,
+            'metadata' => $this->metadata
+        ];
+    }
+
+    public function jsonSerialize(): array
+    {
+        return $this->toArray();
+    }
+}
+
+// app/Core/Widget/DTO/WidgetMetricsDTO.php
+<?php
+
+namespace App\Core\Widget\DTO;
+
+use JsonSerializable;
+
+class WidgetMetricsDTO implements JsonSerializable
+{
+    public function __construct(
+        public readonly int $widgetId,
+        public readonly array $metrics,
+        public readonly array $period,
+        public readonly array $aggregations = []
+    ) {}
+
+    public static function fromArray(array $data): self
+    {
+        return new self(
+            widgetId: $data['widget_id'],
+            metrics: $data['metrics'],
+            period: $data['period'],
+            aggregations: $data['aggregations'] ?? []
+        );
+    }
+
+    public function toArray(): array
+    {
+        return [
+            'widget_id' => $this->widgetId,
+            'metrics' => $this->metrics,
+            'period' => $this->period,
+            'aggregations' => $this->aggregations
+        ];
+    }
+
+    public function jsonSerialize(): array
+    {
+        return $this->toArray();
+    }
+}
+
+// app/Core/Widget/DTO/WidgetSettingsDTO.php
+<?php
+
+namespace App\Core\Widget\DTO;
+
+use JsonSerializable;
+
+class WidgetSettingsDTO implements JsonSerializable
+{
+    public function __construct(
+        public readonly array $settings,
+        public readonly ?int $cacheTtl = null,
+        public readonly array $metadata = []
+    ) {}
+
+    public static function fromArray(array $data): self
+    {
+        return new self(
+            settings: $data['settings'],
+            cacheTtl: $data['cache_ttl'] ?? null,
+            metadata: $data['metadata'] ?? []
+        );
+    }
+
+    public function toArray(): array
+    {
+        return [
+            'settings' => $this->settings,
+            'cache_ttl' => $this->cacheTtl,
+            'metadata' => $this->metadata
+        ];
+    }
+
+    public function jsonSerialize(): array
+    {
+        return $this->toArray();
+    }
+}
+
+// app/Core/Widget/DTO/WidgetVisibilityDTO.php
+<?php
+
+namespace App\Core\Widget\DTO;
+
+use JsonSerializable;
+
+class WidgetVisibilityDTO implements JsonSerializable
+{
+    public function __construct(
+        public readonly array $conditions,
+        public readonly string $operator = 'and'
+    ) {}
+
+    public static function fromArray(array $data): self
+    {
+        return new self(
+            conditions: $data['conditions'],
+            operator: $data['operator'] ?? 'and'
+        );
+    }
+
+    public function toArray(): array
+    {
+        return [
+            'conditions' => $this->conditions,
+            'operator' => $this->operator
+        ];
+    }
+
+    public function jsonSerialize(): array
+    {
+        return $this->toArray();
+    }
+}

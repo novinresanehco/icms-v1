@@ -1,0 +1,210 @@
+// app/Core/Widget/Rules/CustomRule.php
+<?php
+
+namespace App\Core\Widget\Rules;
+
+use Illuminate\Contracts\Validation\Rule;
+
+class CustomRule implements Rule
+{
+    protected string $pattern;
+    protected array $parameters;
+
+    public function __construct(string $pattern, array $parameters = [])
+    {
+        $this->pattern = $pattern;
+        $this->parameters = $parameters;
+    }
+
+    public function passes($attribute, $value): bool
+    {
+        // Implementation of custom validation logic
+        return true;
+    }
+
+    public function message(): string
+    {
+        return 'The :attribute field validation failed.';
+    }
+}
+
+// app/Core/Widget/Rules/WidgetIdentifier.php
+<?php
+
+namespace App\Core\Widget\Rules;
+
+use Illuminate\Contracts\Validation\Rule;
+use App\Core\Widget\Models\Widget;
+
+class WidgetIdentifier implements Rule
+{
+    protected ?int $excludeId;
+
+    public function __construct(?int $excludeId = null)
+    {
+        $this->excludeId = $excludeId;
+    }
+
+    public function passes($attribute, $value): bool
+    {
+        $query = Widget::where('identifier', $value);
+
+        if ($this->excludeId) {
+            $query->where('id', '!=', $this->excludeId);
+        }
+
+        return !$query->exists() && preg_match('/^[a-z0-9\-_]+$/', $value);
+    }
+
+    public function message(): string
+    {
+        return 'The widget identifier must be unique and contain only lowercase letters, numbers, dashes and underscores.';
+    }
+}
+
+// app/Core/Widget/Rules/WidgetSettings.php
+<?php
+
+namespace App\Core\Widget\Rules;
+
+use Illuminate\Contracts\Validation\Rule;
+
+class WidgetSettings implements Rule
+{
+    protected string $widgetType;
+    protected array $allowedSettings;
+
+    public function __construct(string $widgetType, array $allowedSettings)
+    {
+        $this->widgetType = $widgetType;
+        $this->allowedSettings = $allowedSettings;
+    }
+
+    public function passes($attribute, $value): bool
+    {
+        if (!is_array($value)) {
+            return false;
+        }
+
+        foreach ($value as $key => $setting) {
+            if (!in_array($key, $this->allowedSettings)) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    public function message(): string
+    {
+        return "The widget settings contain invalid keys for type {$this->widgetType}.";
+    }
+}
+
+// app/Core/Widget/Rules/WidgetPermissions.php
+<?php
+
+namespace App\Core\Widget\Rules;
+
+use Illuminate\Contracts\Validation\Rule;
+
+class WidgetPermissions implements Rule
+{
+    public function passes($attribute, $value): bool
+    {
+        if (!is_array($value)) {
+            return false;
+        }
+
+        foreach ($value as $permission) {
+            if (!isset($permission['type'], $permission['value'])) {
+                return false;
+            }
+
+            if (!in_array($permission['type'], ['role', 'permission', 'custom'])) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    public function message(): string
+    {
+        return 'The widget permissions format is invalid.';
+    }
+}
+
+// app/Core/Widget/Rules/WidgetVisibilityRules.php
+<?php
+
+namespace App\Core\Widget\Rules;
+
+use Illuminate\Contracts\Validation\Rule;
+
+class WidgetVisibilityRules implements Rule
+{
+    public function passes($attribute, $value): bool
+    {
+        if (!is_array($value)) {
+            return false;
+        }
+
+        if (!isset($value['conditions'], $value['operator'])) {
+            return false;
+        }
+
+        if (!in_array($value['operator'], ['and', 'or'])) {
+            return false;
+        }
+
+        foreach ($value['conditions'] as $condition) {
+            if (!$this->validateCondition($condition)) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    public function message(): string
+    {
+        return 'The widget visibility rules format is invalid.';
+    }
+
+    protected function validateCondition(array $condition): bool
+    {
+        if (!isset($condition['type'], $condition['value'])) {
+            return false;
+        }
+
+        return in_array($condition['type'], ['role', 'permission', 'custom']);
+    }
+}
+
+// app/Core/Widget/Rules/WidgetArea.php
+<?php
+
+namespace App\Core\Widget\Rules;
+
+use Illuminate\Contracts\Validation\Rule;
+
+class WidgetArea implements Rule
+{
+    protected array $allowedAreas;
+
+    public function __construct(array $allowedAreas = [])
+    {
+        $this->allowedAreas = $allowedAreas ?: config('widgets.areas', []);
+    }
+
+    public function passes($attribute, $value): bool
+    {
+        return in_array($value, $this->allowedAreas);
+    }
+
+    public function message(): string
+    {
+        return 'The selected widget area is invalid.';
+    }
+}

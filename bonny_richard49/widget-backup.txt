@@ -1,0 +1,58 @@
+// app/Core/Widget/Backup/WidgetBackupManager.php
+<?php
+
+namespace App\Core\Widget\Backup;
+
+use App\Core\Widget\Models\Widget;
+use App\Core\Widget\Export\WidgetExportService;
+use Illuminate\Support\Facades\Storage;
+use Carbon\Carbon;
+
+class WidgetBackupManager
+{
+    public function __construct(
+        private WidgetExportService $exportService,
+        private string $backupPath = 'backups/widgets'
+    ) {}
+
+    public function createBackup(): string
+    {
+        $widgets = Widget::all();
+        $content = $this->exportService->exportWidgets($widgets, 'json');
+        
+        $filename = $this->generateBackupFilename();
+        $path = $this->backupPath . '/' . $filename;
+        
+        Storage::put($path, $content);
+        
+        $this->cleanupOldBackups();
+        
+        return $path;
+    }
+
+    public function listBackups(): array
+    {
+        return Storage::files($this->backupPath);
+    }
+
+    public function getBackup(string $filename): ?string
+    {
+        $path = $this->backupPath . '/' . $filename;
+        
+        if (!Storage::exists($path)) {
+            return null;
+        }
+        
+        return Storage::get($path);
+    }
+
+    public function restoreBackup(string $filename): void
+    {
+        $content = $this->getBackup($filename);
+        
+        if (!$content) {
+            throw new \RuntimeException("Backup file not found: {$filename}");
+        }
+        
+        // Create restore point before proceeding
+        $this->createRestore

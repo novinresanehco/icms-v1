@@ -1,0 +1,161 @@
+// app/Core/Widget/Models/Widget.php
+<?php
+
+namespace App\Core\Widget\Models;
+
+use App\Core\Widget\Events\WidgetCreated;
+use App\Core\Widget\Events\WidgetDeleted;
+use App\Core\Widget\Events\WidgetUpdated;
+use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\SoftDeletes;
+
+class Widget extends Model
+{
+    use SoftDeletes;
+
+    protected $fillable = [
+        'name',
+        'identifier',
+        'type',
+        'area',
+        'settings',
+        'order',
+        'is_active',
+        'cache_ttl',
+        'visibility_rules',
+        'permissions',
+        'metadata'
+    ];
+
+    protected $casts = [
+        'settings' => 'array',
+        'visibility_rules' => 'array',
+        'permissions' => 'array',
+        'metadata' => 'array',
+        'is_active' => 'boolean'
+    ];
+
+    protected $dispatchesEvents = [
+        'created' => WidgetCreated::class,
+        'updated' => WidgetUpdated::class,
+        'deleted' => WidgetDeleted::class
+    ];
+
+    public function scopeActive($query)
+    {
+        return $query->where('is_active', true);
+    }
+
+    public function scopeByArea($query, string $area)
+    {
+        return $query->where('area', $area);
+    }
+
+    public function scopeByType($query, string $type)
+    {
+        return $query->where('type', $type);
+    }
+
+    public function isVisibleTo($user): bool
+    {
+        if (!$this->is_active) {
+            return false;
+        }
+
+        if (empty($this->visibility_rules)) {
+            return true;
+        }
+
+        $rules = $this->visibility_rules;
+        $results = [];
+
+        foreach ($rules['conditions'] as $condition) {
+            $results[] = $this->evaluateCondition($condition, $user);
+        }
+
+        return $rules['operator'] === 'and'
+            ? !in_array(false, $results, true)
+            : in_array(true, $results, true);
+    }
+
+    public function shouldCache(): bool
+    {
+        return $this->cache_ttl !== null && $this->cache_ttl > 0;
+    }
+
+    protected function evaluateCondition(array $condition, $user): bool
+    {
+        return match($condition['type']) {
+            'role' => $user?->hasRole($condition['value']),
+            'permission' => $user?->can($condition['value']),
+            'custom' => $this->evaluateCustomCondition($condition, $user),
+            default => false
+        };
+    }
+
+    protected function evaluateCustomCondition(array $condition, $user): bool
+    {
+        // Custom condition evaluation implementation
+        return false;
+    }
+}
+
+// app/Core/Widget/Models/WidgetState.php
+<?php
+
+namespace App\Core\Widget\Models;
+
+use Illuminate\Database\Eloquent\Model;
+
+class WidgetState extends Model
+{
+    protected $fillable = [
+        'widget_id',
+        'type',
+        'state_data',
+        'metadata',
+        'created_by'
+    ];
+
+    protected $casts = [
+        'state_data' => 'array',
+        'metadata' => 'array'
+    ];
+
+    public function widget()
+    {
+        return $this->belongsTo(Widget::class);
+    }
+
+    public function creator()
+    {
+        return $this->belongsTo(User::class, 'created_by');
+    }
+}
+
+// app/Core/Widget/Models/WidgetMetric.php
+<?php
+
+namespace App\Core\Widget\Models;
+
+use Illuminate\Database\Eloquent\Model;
+
+class WidgetMetric extends Model
+{
+    protected $fillable = [
+        'widget_id',
+        'metric_key',
+        'metric_value',
+        'recorded_at'
+    ];
+
+    protected $casts = [
+        'recorded_at' => 'datetime',
+        'metric_value' => 'float'
+    ];
+
+    public function widget()
+    {
+        return $this->belongsTo(Widget::class);
+    }
+}

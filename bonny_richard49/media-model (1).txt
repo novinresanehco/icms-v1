@@ -1,0 +1,147 @@
+<?php
+
+namespace App\Models;
+
+use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\SoftDeletes;
+use App\Core\Traits\Auditable;
+use App\Core\Traits\Cacheable;
+
+class Media extends Model
+{
+    use SoftDeletes, Auditable, Cacheable;
+
+    protected $fillable = [
+        'filename',
+        'path',
+        'mime_type',
+        'size',
+        'metadata',
+        'status'
+    ];
+
+    protected $casts = [
+        'metadata' => 'array',
+        'size' => 'integer',
+        'created_at' => 'datetime',
+        'updated_at' => 'datetime',
+        'deleted_at' => 'datetime'
+    ];
+
+    protected $hidden = [
+        'deleted_at'
+    ];
+
+    public function contents()
+    {
+        return $this->morphedByMany(Content::class, 'mediable');
+    }
+
+    public function thumbnails()
+    {
+        return $this->hasMany(MediaThumbnail::class);
+    }
+
+    public function getThumbnailUrl(string $size): ?string
+    {
+        $thumbnail = $this->thumbnails()
+            ->where('size', $size)
+            ->first();
+
+        return $thumbnail ? $thumbnail->getUrl() : null;
+    }
+
+    public function getUrl(): string
+    {
+        return $this->storage->url($this->path);
+    }
+
+    public function isInUse(): bool
+    {
+        return $this->contents()->exists();
+    }
+
+    public function isImage(): bool
+    {
+        return strpos($this->mime_type, 'image/') === 0;
+    }
+
+    public function isVideo(): bool
+    {
+        return strpos($this->mime_type, 'video/') === 0;
+    }
+
+    public function isAudio(): bool
+    {
+        return strpos($this->mime_type, 'audio/') === 0;
+    }
+
+    public function isDocument(): bool
+    {
+        return strpos($this->mime_type, 'application/') === 0;
+    }
+
+    public function setMetadataAttribute(array $value): void
+    {
+        $this->attributes['metadata'] = json_encode(array_merge(
+            $this->metadata ?? [],
+            $value
+        ));
+    }
+
+    public function updateMetadata(array $metadata): void
+    {
+        $this->metadata = array_merge($this->metadata ?? [], $metadata);
+        $this->save();
+    }
+
+    public function getSizeForHumans(): string
+    {
+        $bytes = $this->size;
+        $units = ['B', 'KB', 'MB', 'GB', 'TB'];
+
+        for ($i = 0; $bytes > 1024; $i++) {
+            $bytes /= 1024;
+        }
+
+        return round($bytes, 2) . ' ' . $units[$i];
+    }
+
+    public function getDimensionsAttribute(): ?array
+    {
+        if (!$this->isImage()) {
+            return null;
+        }
+
+        return [
+            'width' => $this->metadata['width'] ?? null,
+            'height' => $this->metadata['height'] ?? null
+        ];
+    }
+
+    public function getDurationAttribute(): ?int
+    {
+        if (!$this->isVideo() && !$this->isAudio()) {
+            return null;
+        }
+
+        return $this->metadata['duration'] ?? null;
+    }
+
+    protected static function boot()
+    {
+        parent::boot();
+
+        static::creating(function ($media) {
+            if (empty($media->status)) {
+                $media->status = 'active';
+            }
+        });
+
+        static::deleting(function ($media) {
+            if ($media->isInUse()) {
+                throw new MediaException('Cannot delete media in use');
+            }
+        });
+    }
+}

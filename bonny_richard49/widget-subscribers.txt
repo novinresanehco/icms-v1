@@ -1,0 +1,180 @@
+// app/Core/Widget/Subscribers/WidgetCacheSubscriber.php
+<?php
+
+namespace App\Core\Widget\Subscribers;
+
+use App\Core\Widget\Events\WidgetCreated;
+use App\Core\Widget\Events\WidgetUpdated;
+use App\Core\Widget\Events\WidgetDeleted;
+use Illuminate\Support\Facades\Cache;
+
+class WidgetCacheSubscriber
+{
+    public function handleWidgetCreated(WidgetCreated $event): void
+    {
+        $this->clearWidgetCache($event->widget);
+        $this->clearAreaCache($event->widget->area);
+    }
+
+    public function handleWidgetUpdated(WidgetUpdated $event): void
+    {
+        $this->clearWidgetCache($event->widget);
+        $this->clearAreaCache($event->widget->area);
+    }
+
+    public function handleWidgetDeleted(WidgetDeleted $event): void
+    {
+        $this->clearWidgetCache($event->widget);
+        $this->clearAreaCache($event->widget->area);
+    }
+
+    protected function clearWidgetCache($widget): void
+    {
+        Cache::tags([
+            'widgets',
+            "widget:{$widget->id}",
+            "type:{$widget->type}"
+        ])->flush();
+    }
+
+    protected function clearAreaCache(string $area): void
+    {
+        Cache::tags([
+            'widgets',
+            "area:{$area}"
+        ])->flush();
+    }
+
+    public function subscribe($events): array
+    {
+        return [
+            WidgetCreated::class => 'handleWidgetCreated',
+            WidgetUpdated::class => 'handleWidgetUpdated',
+            WidgetDeleted::class => 'handleWidgetDeleted',
+        ];
+    }
+}
+
+// app/Core/Widget/Subscribers/WidgetMetricsSubscriber.php
+<?php
+
+namespace App\Core\Widget\Subscribers;
+
+use App\Core\Widget\Events\WidgetViewed;
+use App\Core\Widget\Events\WidgetInteraction;
+use App\Core\Widget\Services\WidgetMetricsService;
+
+class WidgetMetricsSubscriber
+{
+    public function __construct(
+        private WidgetMetricsService $metricsService
+    ) {}
+
+    public function handleWidgetViewed(WidgetViewed $event): void
+    {
+        $this->metricsService->trackView($event->widget);
+    }
+
+    public function handleWidgetInteraction(WidgetInteraction $event): void
+    {
+        $this->metricsService->trackInteraction(
+            $event->widget,
+            $event->action,
+            $event->metadata
+        );
+    }
+
+    public function subscribe($events): array
+    {
+        return [
+            WidgetViewed::class => 'handleWidgetViewed',
+            WidgetInteraction::class => 'handleWidgetInteraction',
+        ];
+    }
+}
+
+// app/Core/Widget/Subscribers/WidgetAuditSubscriber.php
+<?php
+
+namespace App\Core\Widget\Subscribers;
+
+use App\Core\Widget\Events\WidgetCreated;
+use App\Core\Widget\Events\WidgetUpdated;
+use App\Core\Widget\Events\WidgetDeleted;
+use Illuminate\Support\Facades\DB;
+
+class WidgetAuditSubscriber
+{
+    public function handleWidgetCreated(WidgetCreated $event): void
+    {
+        $this->logAuditEvent($event->widget, 'created');
+    }
+
+    public function handleWidgetUpdated(WidgetUpdated $event): void
+    {
+        $this->logAuditEvent(
+            $event->widget, 
+            'updated',
+            $event->changes
+        );
+    }
+
+    public function handleWidgetDeleted(WidgetDeleted $event): void
+    {
+        $this->logAuditEvent($event->widget, 'deleted');
+    }
+
+    protected function logAuditEvent($widget, string $action, array $changes = []): void
+    {
+        DB::table('widget_audit_logs')->insert([
+            'widget_id' => $widget->id,
+            'user_id' => auth()->id(),
+            'action' => $action,
+            'changes' => $changes,
+            'ip_address' => request()->ip(),
+            'user_agent' => request()->userAgent(),
+            'created_at' => now(),
+        ]);
+    }
+
+    public function subscribe($events): array
+    {
+        return [
+            WidgetCreated::class => 'handleWidgetCreated',
+            WidgetUpdated::class => 'handleWidgetUpdated',
+            WidgetDeleted::class => 'handleWidgetDeleted',
+        ];
+    }
+}
+
+// app/Core/Widget/Subscribers/WidgetStateSubscriber.php
+<?php
+
+namespace App\Core\Widget\Subscribers;
+
+use App\Core\Widget\Events\WidgetUpdated;
+use App\Core\Widget\Services\WidgetStateService;
+
+class WidgetStateSubscriber
+{
+    public function __construct(
+        private WidgetStateService $stateService
+    ) {}
+
+    public function handle(WidgetUpdated $event): void
+    {
+        if (!empty($event->changes)) {
+            $this->stateService->recordState(
+                $event->widget,
+                $event->changes
+            );
+        }
+    }
+
+    public function subscribe($events): array
+    {
+        return [
+            WidgetUpdated::class => 'handle',
+        ];
+    }
+}

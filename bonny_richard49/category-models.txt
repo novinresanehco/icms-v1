@@ -1,0 +1,178 @@
+<?php
+
+namespace App\Models;
+
+use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\SoftDeletes;
+use App\Core\Traits\Auditable;
+use App\Core\Traits\Cacheable;
+
+class Category extends Model
+{
+    use SoftDeletes, Auditable, Cacheable;
+
+    protected $fillable = [
+        'name',
+        'slug',
+        'description',
+        'parent_id',
+        'order',
+        'status',
+        'meta_title',
+        'meta_description'
+    ];
+
+    protected $casts = [
+        'created_at' => 'datetime',
+        'updated_at' => 'datetime',
+        'deleted_at' => 'datetime'
+    ];
+
+    protected $dates = [
+        'created_at',
+        'updated_at',
+        'deleted_at'
+    ];
+
+    public function parent()
+    {
+        return $this->belongsTo(Category::class, 'parent_id');
+    }
+
+    public function children()
+    {
+        return $this->hasMany(Category::class, 'parent_id');
+    }
+
+    public function contents()
+    {
+        return $this->hasMany(Content::class);
+    }
+
+    public function hasChildren(): bool
+    {
+        return $this->children()->exists();
+    }
+
+    public function hasContent(): bool
+    {
+        return $this->contents()->exists();
+    }
+
+    public function isActive(): bool
+    {
+        return $this->status === 'active';
+    }
+
+    public function isRoot(): bool
+    {
+        return is_null($this->parent_id);
+    }
+
+    public function isLeaf(): bool
+    {
+        return !$this->hasChildren();
+    }
+
+    public function getPath(): array
+    {
+        $path = [$this->id];
+        $category = $this;
+
+        while ($category->parent_id) {
+            $category = $category->parent;
+            array_unshift($path, $category->id);
+        }
+
+        return $path;
+    }
+
+    public function getPathAsString(string $separator = '/'): string
+    {
+        $path = [];
+        $category = $this;
+
+        while ($category) {
+            array_unshift($path, $category->name);
+            $category = $category->parent;
+        }
+
+        return implode($separator, $path);
+    }
+
+    public function getLevel(): int
+    {
+        $level = 0;
+        $category = $this;
+
+        while ($category->parent_id) {
+            $level++;
+            $category = $category->parent;
+        }
+
+        return $level;
+    }
+
+    public function getDescendants(): Collection
+    {
+        return Category::whereIn('parent_id', [$this->id])
+            ->orWhereIn('parent_id', function($query) {
+                $query->select('id')
+                    ->from('categories')
+                    ->where('parent_id', $this->id);
+            })
+            ->get();
+    }
+
+    public function getSiblings(): Collection
+    {
+        return Category::where('parent_id', $this->parent_id)
+            ->where('id', '!=', $this->id)
+            ->orderBy('order')
+            ->get();
+    }
+
+    public function getNextSibling(): ?Category
+    {
+        return Category::where('parent_id', $this->parent_id)
+            ->where('order', '>', $this->order)
+            ->orderBy('order')
+            ->first();
+    }
+
+    public function getPreviousSibling(): ?Category
+    {
+        return Category::where('parent_id', $this->parent_id)
+            ->where('order', '<', $this->order)
+            ->orderBy('order', 'desc')
+            ->first();
+    }
+
+    protected static function boot()
+    {
+        parent::boot();
+
+        static::creating(function ($category) {
+            if (!$category->slug) {
+                $category->slug = Str::slug($category->name);
+            }
+            
+            if (!$category->order) {
+                $category->order = static::where('parent_id', $category->parent_id)
+                    ->max('order') + 1;
+            }
+        });
+
+        static::updating(function ($category) {
+            if ($category->isDirty('name') && !$category->isDirty('slug')) {
+                $category->slug = Str::slug($category->name);
+            }
+        });
+
+        static::deleting(function ($category) {
+            if ($category->hasChildren() || $category->hasContent()) {
+                throw new CategoryException('Cannot delete category with children or content');
+            }
+        });
+    }
+}

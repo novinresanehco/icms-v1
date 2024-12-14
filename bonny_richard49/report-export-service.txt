@@ -1,0 +1,111 @@
+<?php
+
+namespace App\Core\Notification\Analytics\Services;
+
+use App\Core\Notification\Analytics\Models\AnalyticsReport;
+use App\Core\Notification\Analytics\Events\ReportExportedEvent;
+use Illuminate\Support\Facades\Storage;
+use PhpOffice\PhpSpreadsheet\{Spreadsheet, Chart\Chart};
+use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
+use Carbon\Carbon;
+
+class ReportExportService
+{
+    private array $config;
+    private Spreadsheet $spreadsheet;
+
+    public function __construct(array $config = [])
+    {
+        $this->config = array_merge([
+            'storage_disk' => 'local',
+            'export_path' => 'exports/analytics',
+            'chart_colors' => [
+                '#4e79a7', '#f28e2c', '#e15759', '#76b7b2',
+                '#59a14f', '#edc949', '#af7aa1', '#ff9da7'
+            ]
+        ], $config);
+    }
+
+    public function exportReport(AnalyticsReport $report, string $format = 'xlsx'): array
+    {
+        $exportMethod = match($format) {
+            'xlsx' => 'exportToExcel',
+            'csv' => 'exportToCsv',
+            'pdf' => 'exportToPdf',
+            default => throw new \InvalidArgumentException("Unsupported format: {$format}")
+        };
+
+        $result = $this->$exportMethod($report);
+
+        event(new ReportExportedEvent($report, $result));
+
+        return $result;
+    }
+
+    private function exportToExcel(AnalyticsReport $report): array
+    {
+        $this->spreadsheet = new Spreadsheet();
+        
+        // Add summary sheet
+        $this->addSummarySheet($report);
+
+        // Add detailed metrics sheets
+        if (isset($report->data['delivery_metrics'])) {
+            $this->addDeliveryMetricsSheet($report->data['delivery_metrics']);
+        }
+
+        if (isset($report->data['performance_metrics'])) {
+            $this->addPerformanceMetricsSheet($report->data['performance_metrics']);
+        }
+
+        if (isset($report->data['engagement_metrics'])) {
+            $this->addEngagementMetricsSheet($report->data['engagement_metrics']);
+        }
+
+        // Generate charts
+        $this->addCharts($report);
+
+        // Save the file
+        $filename = $this->generateFilename($report, 'xlsx');
+        $path = $this->config['export_path'] . '/' . $filename;
+
+        $writer = new Xlsx($this->spreadsheet);
+        Storage::disk($this->config['storage_disk'])->makeDirectory($this->config['export_path']);
+        
+        $writer->save(storage_path('app/' . $path));
+
+        return [
+            'success' => true,
+            'format' => 'xlsx',
+            'filename' => $filename,
+            'path' => $path,
+            'url' => Storage::disk($this->config['storage_disk'])->url($path),
+            'metadata' => [
+                'generated_at' => now(),
+                'report_period' => [
+                    'start' => $report->data['period']['start'],
+                    'end' => $report->data['period']['end']
+                ]
+            ]
+        ];
+    }
+
+    private function addSummarySheet(AnalyticsReport $report): void
+    {
+        $sheet = $this->spreadsheet->getActiveSheet();
+        $sheet->setTitle('Summary');
+
+        // Add report header
+        $sheet->setCellValue('A1', 'Analytics Report Summary');
+        $sheet->setCellValue('A2', 'Period: ' . $report->data['period']['start'] . ' to ' . $report->data['period']['end']);
+
+        // Add summary metrics
+        $row = 4;
+        foreach ($report->data['summary'] as $metric => $value) {
+            $sheet->setCellValue('A' . $row, ucwords(str_replace('_', ' ', $metric)));
+            $sheet->setCellValue('B' . $row, is_numeric($value) ? round($value, 2) : $value);
+            $row++;
+        }
+
+        // Style the sheet
+        $sheet->getStyle('A1')->getFont()->setBold(true)->setSize(

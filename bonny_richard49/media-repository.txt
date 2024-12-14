@@ -1,0 +1,340 @@
+<?php
+
+namespace App\Core\Media\Repository;
+
+use App\Core\Media\Models\Media;
+use App\Core\Media\DTO\MediaData;
+use App\Core\Media\Events\MediaUploaded;
+use App\Core\Media\Events\MediaUpdated;
+use App\Core\Media\Events\MediaDeleted;
+use App\Core\Media\Events\MediaMoved;
+use App\Core\Media\Services\FileManager;
+use App\Core\Media\Services\ThumbnailGenerator;
+use App\Core\Shared\Repository\BaseRepository;
+use App\Core\Shared\Cache\CacheManagerInterface;
+use Illuminate\Database\Eloquent\Collection;
+use Illuminate\Http\UploadedFile;
+use Illuminate\Pagination\LengthAwarePaginator;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Event;
+use Illuminate\Support\Facades\Storage;
+
+class MediaRepository extends BaseRepository implements MediaRepositoryInterface
+{
+    protected const CACHE_KEY = 'media';
+    protected const CACHE_TTL = 3600; // 1 hour
+
+    protected FileManager $fileManager;
+    protected ThumbnailGenerator $thumbnailGenerator;
+
+    public function __construct(
+        CacheManagerInterface $cache,
+        FileManager $fileManager,
+        ThumbnailGenerator $thumbnailGenerator
+    ) {
+        parent::__construct($cache);
+        $this->fileManager = $fileManager;
+        $this->thumbnailGenerator = $thumbnailGenerator;
+        $this->setCacheKey(self::CACHE_KEY);
+        $this->setCacheTtl(self::CACHE_TTL);
+    }
+
+    protected function getModelClass(): string
+    {
+        return Media::class;
+    }
+
+    public function upload(UploadedFile $file, array $attributes = []): Media
+    {
+        DB::beginTransaction();
+        try {
+            // Process and store file
+            $fileData = $this->fileManager->store($file);
+
+            // Create media record
+            $media = $this->model->create([
+                'name' => $attributes['name'] ?? $file->getClientOriginalName(),
+                'file_name' => $fileData['file_name'],
+                'mime_type' => $file->getMimeType(),
+                'size' => $file->getSize(),
+                'path' => $fileData['path'],
+                'disk' => $fileData['disk'],
+                'folder_id' => $attributes['folder_id'] ?? null,
+                'meta' => array_merge($fileData['meta'] ?? [], $attributes['meta'] ?? []),
+            ]);
+
+            // Generate thumbnails if it's an image
+            if ($this->isImage($media)) {
+                $this->generateThumbnails($media->id);
+            }
+
+            // Clear cache
+            $this->clearCache();
+
+            // Dispatch event
+            Event::dispatch(new MediaUploaded($media));
+
+            DB::commit();
+            return $media->fresh();
+        } catch (\Exception $e) {
+            DB::rollBack();
+            throw $e;
+        }
+    }
+
+    public function createFromUrl(string $url, array $attributes = []): Media
+    {
+        DB::beginTransaction();
+        try {
+            // Download and store file
+            $fileData = $this->fileManager->storeFromUrl($url);
+
+            // Create media record
+            $media = $this->model->create([
+                'name' => $attributes['name'] ?? basename($url),
+                'file_name' => $fileData['file_name'],
+                'mime_type' => $fileData['mime_type'],
+                'size' => $fileData['size'],
+                'path' => $fileData['path'],
+                'disk' => $fileData['disk'],
+                'folder_id' => $attributes['folder_id'] ?? null,
+                'meta' => array_merge($fileData['meta'] ?? [], $attributes['meta'] ?? []),
+            ]);
+
+            // Generate thumbnails if it's an image
+            if ($this->isImage($media)) {
+                $this->generateThumbnails($media->id);
+            }
+
+            // Clear cache
+            $this->clearCache();
+
+            DB::commit();
+            return $media->fresh();
+        } catch (\Exception $e) {
+            DB::rollBack();
+            throw $e;
+        }
+    }
+
+    public function updateAttributes(int $id, MediaData $data): Media
+    {
+        DB::beginTransaction();
+        try {
+            $media = $this->findOrFail($id);
+            
+            $media->update([
+                'name' => $data->name,
+                'alt_text' => $data->altText,
+                'caption' => $data->caption,
+                'meta' => array_merge($media->meta ?? [], $data->meta ?? []),
+            ]);
+
+            // Clear cache
+            $this->clearCache();
+
+            // Dispatch event
+            Event::dispatch(new MediaUpdated($media));
+
+            DB::commit();
+            return $media->fresh();
+        } catch (\Exception $e) {
+            DB::rollBack();
+            throw $e;
+        }
+    }
+
+    public function getByType(string $type, array $options = []): Collection
+    {
+        return $this->cache->remember(
+            $this->getCacheKey("type:{$type}"),
+            fn() => $this->model->where('mime_type', 'LIKE', "{$type}/%")
+                               ->orderBy($options['sort'] ?? 'created_at', $options['direction'] ?? 'desc')
+                               ->get()
+        );
+    }
+
+    public function paginate(int $page = 1, int $perPage = 15, array $filters = []): LengthAwarePaginator
+    {
+        $query = $this->model->newQuery();
+
+        // Apply filters
+        if (!empty($filters['type'])) {
+            $query->where('mime_type', 'LIKE', "{$filters['type']}/%");
+        }
+        if (!empty($filters['folder_id'])) {
+            $query->where('folder_id', $filters['folder_id']);
+        }
+        if (isset($filters['search'])) {
+            $query->where('name', 'LIKE', "%{$filters['search']}%");
+        }
+
+        return $query->orderBy($filters['sort'] ?? 'created_at', $filters['direction'] ?? 'desc')
+                    ->paginate($perPage, ['*'], 'page', $page);
+    }
+
+    public function getByFolder(int $folderId, array $options = []): Collection
+    {
+        return $this->cache->remember(
+            $this->getCacheKey("folder:{$folderId}"),
+            fn() => $this->model->where('folder_id', $folderId)
+                               ->orderBy($options['sort'] ?? 'created_at', $options['direction'] ?? 'desc')
+                               ->get()
+        );
+    }
+
+    public function moveToFolder(int $id, ?int $folderId): Media
+    {
+        DB::beginTransaction();
+        try {
+            $media = $this->findOrFail($id);
+            $oldFolderId = $media->folder_id;
+
+            $media->update(['folder_id' => $folderId]);
+
+            // Clear cache
+            $this->clearCache();
+
+            // Dispatch event
+            Event::dispatch(new MediaMoved($media, $oldFolderId, $folderId));
+
+            DB::commit();
+            return $media->fresh();
+        } catch (\Exception $e) {
+            DB::rollBack();
+            throw $e;
+        }
+    }
+
+    public function generateThumbnails(int $id, array $sizes = []): Media
+    {
+        $media = $this->findOrFail($id);
+
+        if (!$this->isImage($media)) {
+            return $media;
+        }
+
+        DB::beginTransaction();
+        try {
+            $thumbnails = $this->thumbnailGenerator->generate(
+                $media->path,
+                $media->disk,
+                $sizes
+            );
+
+            $media->update(['thumbnails' => $thumbnails]);
+
+            DB::commit();
+            return $media->fresh();
+        } catch (\Exception $e) {
+            DB::rollBack();
+            throw $e;
+        }
+    }
+
+    public function getUsageStats(int $id): array
+    {
+        return $this->cache->remember(
+            $this->getCacheKey("stats:{$id}"),
+            fn() => [
+                'total_usage' => $this->getMediaUsageCount($id),
+                'by_model' => $this->getMediaUsageByModel($id),
+                'download_count' => $this->getMediaDownloadCount($id),
+            ]
+        );
+    }
+
+    public function search(string $query, array $options = []): Collection
+    {
+        // Search is not cached as it's dynamic
+        return $this->model->where('name', 'LIKE', "%{$query}%")
+                          ->orWhere('alt_text', 'LIKE', "%{$query}%")
+                          ->orWhere('caption', 'LIKE', "%{$query}%")
+                          ->orderBy($options['sort'] ?? 'created_at', $options['direction'] ?? 'desc')
+                          ->get();
+    }
+
+    public function getByMimeType(string $mimeType, array $options = []): Collection
+    {
+        return $this->cache->remember(
+            $this->getCacheKey("mime:{$mimeType}"),
+            fn() => $this->model->where('mime_type', $mimeType)
+                               ->orderBy($options['sort'] ?? 'created_at', $options['direction'] ?? 'desc')
+                               ->get()
+        );
+    }
+
+    public function cleanup(int $days = 30): int
+    {
+        $date = now()->subDays($days);
+        $files = $this->model->where('created_at', '<', $date)
+                            ->whereDoesntHave('usages')
+                            ->get();
+
+        $count = 0;
+        foreach ($files as $file) {
+            if ($this->delete($file->id)) {
+                $count++;
+            }
+        }
+
+        return $count;
+    }
+
+    protected function delete($id): bool
+    {
+        DB::beginTransaction();
+        try {
+            $media = $this->findOrFail($id);
+
+            // Delete physical file
+            $this->fileManager->delete($media->path, $media->disk);
+
+            // Delete thumbnails
+            if (!empty($media->thumbnails)) {
+                foreach ($media->thumbnails as $thumbnail) {
+                    $this->fileManager->delete($thumbnail['path'], $media->disk);
+                }
+            }
+
+            // Delete database record
+            $media->delete();
+
+            // Clear cache
+            $this->clearCache();
+
+            // Dispatch event
+            Event::dispatch(new MediaDeleted($media));
+
+            DB::commit();
+            return true;
+        } catch (\Exception $e) {
+            DB::rollBack();
+            throw $e;
+        }
+    }
+
+    protected function isImage(Media $media): bool
+    {
+        return strpos($media->mime_type, 'image/') === 0;
+    }
+
+    protected function getMediaUsageCount(int $id): int
+    {
+        return $this->model->find($id)->usages()->count();
+    }
+
+    protected function getMediaUsageByModel(int $id): array
+    {
+        return $this->model->find($id)
+                          ->usages()
+                          ->select('model_type', DB::raw('count(*) as count'))
+                          ->groupBy('model_type')
+                          ->get()
+                          ->pluck('count', 'model_type')
+                          ->toArray();
+    }
+
+    protected function getMediaDownloadCount(int $id): int
+    {
+        return $

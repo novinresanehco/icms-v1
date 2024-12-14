@@ -1,0 +1,103 @@
+// app/Core/Widget/Notifications/WidgetStateChanged.php
+<?php
+
+namespace App\Core\Widget\Notifications;
+
+use App\Core\Widget\Models\Widget;
+use Illuminate\Bus\Queueable;
+use Illuminate\Contracts\Queue\ShouldQueue;
+use Illuminate\Notifications\Notification;
+use Illuminate\Notifications\Messages\MailMessage;
+
+class WidgetStateChanged extends Notification implements ShouldQueue
+{
+    use Queueable;
+
+    public function __construct(
+        private Widget $widget,
+        private string $action,
+        private array $changes = []
+    ) {}
+
+    public function via($notifiable): array
+    {
+        return ['mail', 'database'];
+    }
+
+    public function toMail($notifiable): MailMessage
+    {
+        return (new MailMessage)
+            ->subject("Widget {$this->action}: {$this->widget->name}")
+            ->line("The widget {$this->widget->name} has been {$this->action}.")
+            ->line($this->formatChanges())
+            ->action('View Widget', url("/admin/widgets/{$this->widget->id}"));
+    }
+
+    public function toArray($notifiable): array
+    {
+        return [
+            'widget_id' => $this->widget->id,
+            'action' => $this->action,
+            'changes' => $this->changes,
+            'timestamp' => now()->toIso8601String()
+        ];
+    }
+
+    private function formatChanges(): string
+    {
+        if (empty($this->changes)) {
+            return '';
+        }
+
+        $changes = collect($this->changes)->map(function ($change, $field) {
+            return "- {$field}: from '{$change['old']}' to '{$change['new']}'";
+        })->join("\n");
+
+        return "Changes made:\n{$changes}";
+    }
+}
+
+// app/Core/Widget/Notifications/WidgetMetricsAlert.php
+<?php
+
+namespace App\Core\Widget\Notifications;
+
+use App\Core\Widget\Models\Widget;
+use Illuminate\Bus\Queueable;
+use Illuminate\Contracts\Queue\ShouldQueue;
+use Illuminate\Notifications\Notification;
+use Illuminate\Notifications\Messages\MailMessage;
+
+class WidgetMetricsAlert extends Notification implements ShouldQueue
+{
+    use Queueable;
+
+    public function __construct(
+        private Widget $widget,
+        private array $metrics,
+        private array $thresholds,
+        private array $violations
+    ) {}
+
+    public function via($notifiable): array
+    {
+        return ['mail', 'database'];
+    }
+
+    public function toMail($notifiable): MailMessage
+    {
+        return (new MailMessage)
+            ->subject("Widget Metrics Alert: {$this->widget->name}")
+            ->line("Performance issues detected for widget {$this->widget->name}.")
+            ->line($this->formatViolations())
+            ->action('View Metrics', url("/admin/widgets/{$this->widget->id}/metrics"));
+    }
+
+    public function toArray($notifiable): array
+    {
+        return [
+            'widget_id' => $this->widget->id,
+            'metrics' => $this->metrics,
+            'thresholds' => $this->thresholds,
+            'violations' => $this->violations,
+            'timestamp

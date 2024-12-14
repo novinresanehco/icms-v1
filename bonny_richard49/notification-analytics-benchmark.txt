@@ -1,0 +1,56 @@
+<?php
+
+namespace App\Core\Notification\Analytics\Benchmark;
+
+class AnalyticsBenchmark
+{
+    private array $benchmarks = [];
+    private array $results = [];
+    private array $config;
+
+    public function __construct(array $config = [])
+    {
+        $this->config = array_merge([
+            'iterations' => 1000,
+            'warmup_iterations' => 100,
+            'memory_tracking' => true,
+            'time_precision' => 6
+        ], $config);
+    }
+
+    public function register(string $name, callable $benchmark): void
+    {
+        $this->benchmarks[$name] = $benchmark;
+    }
+
+    public function run(array $names = []): array
+    {
+        $benchmarksToRun = empty($names) ? array_keys($this->benchmarks) : $names;
+
+        foreach ($benchmarksToRun as $name) {
+            if (!isset($this->benchmarks[$name])) {
+                continue;
+            }
+
+            $this->warmup($name);
+            $this->results[$name] = $this->executeBenchmark($name);
+        }
+
+        return $this->results;
+    }
+
+    public function compare(array $names): array
+    {
+        $results = $this->run($names);
+        return $this->generateComparison($results);
+    }
+
+    public function getResults(): array
+    {
+        return $this->results;
+    }
+
+    private function warmup(string $name): void
+    {
+        $benchmark = $this->benchmarks[$name];
+        for ($i = 0; $i < $

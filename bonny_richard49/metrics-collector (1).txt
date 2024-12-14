@@ -1,0 +1,131 @@
+<?php
+
+namespace App\Core\Monitoring;
+
+class MetricsCollector implements MetricsCollectorInterface
+{
+    private MetricsStore $store;
+    private MetricsProcessor $processor;
+    private AlertManager $alerts;
+    private array $thresholds;
+
+    public function collectMetrics(string $type, array $data): void 
+    {
+        $operationId = uniqid('metrics_', true);
+
+        try {
+            $processedData = $this->processor->processMetrics($data);
+            $this->validateMetrics($processedData);
+            $this->storeMetrics($type, $processedData, $operationId);
+            $this->checkThresholds($type, $processedData);
+
+        } catch (\Throwable $e) {
+            $this->handleCollectionFailure($e, $type, $data, $operationId);
+            throw $e;
+        }
+    }
+
+    public function getMetrics(string $type, array $filters = []): array
+    {
+        try {
+            $metrics = $this->store->getMetrics($type, $filters);
+            return $this->processor->aggregateMetrics($metrics);
+
+        } catch (\Throwable $e) {
+            $this->handleRetrievalFailure($e, $type, $filters);
+            throw $e;
+        }
+    }
+
+    protected function validateMetrics(array $metrics): void
+    {
+        if (!$this->processor->validateMetricsFormat($metrics)) {
+            throw new MetricsException('Invalid metrics format');
+        }
+
+        if (!$this->processor->validateMetricsValues($metrics)) {
+            throw new MetricsException('Invalid metrics values');
+        }
+    }
+
+    protected function storeMetrics(
+        string $type,
+        array $metrics,
+        string $operationId
+    ): void {
+        $this->store->store([
+            'type' => $type,
+            'metrics' => $metrics,
+            'timestamp' => time(),
+            'operation_id' => $operationId
+        ]);
+    }
+
+    protected function checkThresholds(string $type, array $metrics): void
+    {
+        foreach ($metrics as $metric => $value) {
+            if (isset($this->thresholds[$type][$metric])) {
+                $this->evaluateThreshold($type, $metric, $value);
+            }
+        }
+    }
+
+    protected function evaluateThreshold(
+        string $type,
+        string $metric,
+        $value
+    ): void {
+        $threshold = $this->thresholds[$type][$metric];
+
+        if ($this->isThresholdViolated($value, $threshold)) {
+            $this->handleThresholdViolation($type, $metric, $value, $threshold);
+        }
+    }
+
+    protected function isThresholdViolated($value, array $threshold): bool
+    {
+        return match ($threshold['operator']) {
+            '>' => $value > $threshold['value'],
+            '<' => $value < $threshold['value'],
+            '>=' => $value >= $threshold['value'],
+            '<=' => $value <= $threshold['value'],
+            '=' => $value == $threshold['value'],
+            default => false
+        };
+    }
+
+    protected function handleThresholdViolation(
+        string $type,
+        string $metric,
+        $value,
+        array $threshold
+    ): void {
+        $alert = [
+            'type' => 'threshold_violation',
+            'metric_type' => $type,
+            'metric' => $metric,
+            'value' => $value,
+            'threshold' => $threshold,
+            'timestamp' => time()
+        ];
+
+        $this->alerts->triggerAlert($alert);
+    }
+
+    protected function handleCollectionFailure(
+        \Throwable $e,
+        string $type,
+        array $data,
+        string $operationId
+    ): void {
+        $this->alerts->triggerAlert([
+            'type' => 'metrics_collection_failure',
+            'metric_type' => $type,
+            'error' => $e->getMessage(),
+            'operation_id' => $operationId,
+            'severity' => 'ERROR'
+        ]);
+    }
+
+    protected function handleRetrievalFailure(
+        \Throwable $e,

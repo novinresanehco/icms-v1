@@ -1,0 +1,266 @@
+// app/Core/Widget/Builders/WidgetBuilder.php
+<?php
+
+namespace App\Core\Widget\Builders;
+
+use App\Core\Widget\Models\Widget;
+use App\Core\Widget\DTO\WidgetDTO;
+
+class WidgetBuilder
+{
+    private array $attributes = [];
+
+    public function setName(string $name): self
+    {
+        $this->attributes['name'] = $name;
+        return $this;
+    }
+
+    public function setIdentifier(string $identifier): self
+    {
+        $this->attributes['identifier'] = $identifier;
+        return $this;
+    }
+
+    public function setType(string $type): self
+    {
+        $this->attributes['type'] = $type;
+        return $this;
+    }
+
+    public function setArea(string $area): self
+    {
+        $this->attributes['area'] = $area;
+        return $this;
+    }
+
+    public function setSettings(array $settings): self
+    {
+        $this->attributes['settings'] = $settings;
+        return $this;
+    }
+
+    public function setActive(bool $active): self
+    {
+        $this->attributes['is_active'] = $active;
+        return $this;
+    }
+
+    public function setOrder(?int $order): self
+    {
+        $this->attributes['order'] = $order;
+        return $this;
+    }
+
+    public function setCacheTtl(?int $ttl): self
+    {
+        $this->attributes['cache_ttl'] = $ttl;
+        return $this;
+    }
+
+    public function setVisibilityRules(array $rules): self
+    {
+        $this->attributes['visibility_rules'] = $rules;
+        return $this;
+    }
+
+    public function setPermissions(array $permissions): self
+    {
+        $this->attributes['permissions'] = $permissions;
+        return $this;
+    }
+
+    public function setMetadata(array $metadata): self
+    {
+        $this->attributes['metadata'] = $metadata;
+        return $this;
+    }
+
+    public function build(): Widget
+    {
+        return Widget::create($this->attributes);
+    }
+
+    public function toDTO(): WidgetDTO
+    {
+        return new WidgetDTO(
+            name: $this->attributes['name'],
+            identifier: $this->attributes['identifier'],
+            type: $this->attributes['type'],
+            area: $this->attributes['area'],
+            settings: $this->attributes['settings'] ?? [],
+            isActive: $this->attributes['is_active'] ?? true,
+            order: $this->attributes['order'] ?? null,
+            cacheTtl: $this->attributes['cache_ttl'] ?? null,
+            visibilityRules: $this->attributes['visibility_rules'] ?? [],
+            permissions: $this->attributes['permissions'] ?? [],
+            metadata: $this->attributes['metadata'] ?? []
+        );
+    }
+}
+
+// app/Core/Widget/Builders/WidgetSettingsBuilder.php
+<?php
+
+namespace App\Core\Widget\Builders;
+
+class WidgetSettingsBuilder
+{
+    private array $settings = [];
+
+    public function setTitle(string $title): self 
+    {
+        $this->settings['title'] = $title;
+        return $this;
+    }
+
+    public function setDescription(?string $description): self
+    {
+        $this->settings['description'] = $description;
+        return $this;
+    }
+
+    public function setShowTitle(bool $show): self
+    {
+        $this->settings['show_title'] = $show;
+        return $this;
+    }
+
+    public function setWrapperClass(?string $class): self
+    {
+        $this->settings['wrapper_class'] = $class;
+        return $this;
+    }
+
+    public function setTemplate(string $template): self
+    {
+        $this->settings['template'] = $template;
+        return $this;
+    }
+
+    public function setCache(bool $cache): self
+    {
+        $this->settings['cache'] = $cache;
+        return $this;
+    }
+
+    public function setCacheDuration(?int $duration): self
+    {
+        $this->settings['cache_duration'] = $duration;
+        return $this;
+    }
+
+    public function setData(array $data): self
+    {
+        $this->settings['data'] = $data;
+        return $this;
+    }
+
+    public function build(): array
+    {
+        return $this->settings;
+    }
+}
+
+// app/Core/Widget/Builders/WidgetQueryBuilder.php
+<?php
+
+namespace App\Core\Widget\Builders;
+
+use App\Core\Widget\Models\Widget;
+use Illuminate\Database\Eloquent\Builder;
+
+class WidgetQueryBuilder
+{
+    private Builder $query;
+
+    public function __construct()
+    {
+        $this->query = Widget::query();
+    }
+
+    public function active(): self
+    {
+        $this->query->where('is_active', true);
+        return $this;
+    }
+
+    public function inArea(string $area): self
+    {
+        $this->query->where('area', $area);
+        return $this;
+    }
+
+    public function ofType(string $type): self
+    {
+        $this->query->where('type', $type);
+        return $this;
+    }
+
+    public function withCache(): self
+    {
+        $this->query->whereNotNull('cache_ttl');
+        return $this;
+    }
+
+    public function withPermissions(array $permissions): self
+    {
+        $this->query->whereJsonContains('permissions', $permissions);
+        return $this;
+    }
+
+    public function orderedBy(string $column = 'order', string $direction = 'asc'): self
+    {
+        $this->query->orderBy($column, $direction);
+        return $this;
+    }
+
+    public function get(): Builder
+    {
+        return $this->query;
+    }
+}
+
+// app/Core/Widget/Builders/WidgetMetricsBuilder.php
+<?php
+
+namespace App\Core\Widget\Builders;
+
+use Carbon\Carbon;
+
+class WidgetMetricsBuilder
+{
+    private array $metrics = [];
+    private array $period = [];
+    private array $aggregations = [];
+
+    public function setMetric(string $key, $value): self
+    {
+        $this->metrics[$key] = $value;
+        return $this;
+    }
+
+    public function setPeriod(Carbon $start, Carbon $end): self
+    {
+        $this->period = [
+            'start' => $start,
+            'end' => $end
+        ];
+        return $this;
+    }
+
+    public function addAggregation(string $key, $value): self
+    {
+        $this->aggregations[$key] = $value;
+        return $this;
+    }
+
+    public function build(): array
+    {
+        return [
+            'metrics' => $this->metrics,
+            'period' => $this->period,
+            'aggregations' => $this->aggregations
+        ];
+    }
+}

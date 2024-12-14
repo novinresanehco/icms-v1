@@ -1,0 +1,137 @@
+<?php
+
+namespace App\Policies;
+
+use App\Models\User;
+use App\Models\Category;
+use App\Core\Security\SecurityManager;
+use App\Core\Logging\AuditLogger;
+
+class CategoryPolicy
+{
+    private SecurityManager $security;
+    private AuditLogger $auditLogger;
+
+    public function __construct(
+        SecurityManager $security,
+        AuditLogger $auditLogger
+    ) {
+        $this->security = $security;
+        $this->auditLogger = $auditLogger;
+    }
+
+    public function viewAny(User $user): bool
+    {
+        try {
+            $this->security->validateOperation('category.list');
+            return $user->hasPermission('category.list');
+        } catch (\Exception $e) {
+            $this->auditLogger->logPolicyFailure('category.list', [
+                'user' => $user->id,
+                'error' => $e->getMessage()
+            ]);
+            return false;
+        }
+    }
+
+    public function view(User $user, Category $category): bool
+    {
+        try {
+            $this->security->validateOperation('category.view');
+            return $user->hasPermission('category.view');
+        } catch (\Exception $e) {
+            $this->auditLogger->logPolicyFailure('category.view', [
+                'user' => $user->id,
+                'category' => $category->id,
+                'error' => $e->getMessage()
+            ]);
+            return false;
+        }
+    }
+
+    public function create(User $user): bool
+    {
+        try {
+            $this->security->validateOperation('category.create');
+            return $user->hasPermission('category.create');
+        } catch (\Exception $e) {
+            $this->auditLogger->logPolicyFailure('category.create', [
+                'user' => $user->id,
+                'error' => $e->getMessage()
+            ]);
+            return false;
+        }
+    }
+
+    public function update(User $user, Category $category): bool
+    {
+        try {
+            $this->security->validateOperation('category.update');
+            return $user->hasPermission('category.update');
+        } catch (\Exception $e) {
+            $this->auditLogger->logPolicyFailure('category.update', [
+                'user' => $user->id,
+                'category' => $category->id,
+                'error' => $e->getMessage()
+            ]);
+            return false;
+        }
+    }
+
+    public function delete(User $user, Category $category): bool
+    {
+        try {
+            $this->security->validateOperation('category.delete');
+            
+            if (!$user->hasPermission('category.delete')) {
+                return false;
+            }
+
+            if ($category->hasChildren()) {
+                return false;
+            }
+
+            if ($category->hasContent()) {
+                return false;
+            }
+
+            return true;
+        } catch (\Exception $e) {
+            $this->auditLogger->logPolicyFailure('category.delete', [
+                'user' => $user->id,
+                'category' => $category->id,
+                'error' => $e->getMessage()
+            ]);
+            return false;
+        }
+    }
+
+    public function move(User $user, Category $category): bool
+    {
+        try {
+            $this->security->validateOperation('category.move');
+            return $user->hasPermission('category.move');
+        } catch (\Exception $e) {
+            $this->auditLogger->logPolicyFailure('category.move', [
+                'user' => $user->id,
+                'category' => $category->id,
+                'error' => $e->getMessage()
+            ]);
+            return false;
+        }
+    }
+
+    public function validatePath(User $user): bool
+    {
+        try {
+            $this->security->validateOperation('category.validate_path');
+            return $user->hasPermission('category.validate_path');
+        } catch (\Exception $e) {
+            $this->auditLogger->logPolicyFailure('category.validate_path', [
+                'user' => $user->id,
+                'error' => $e->getMessage()
+            ]);
+            return false;
+        }
+    }
+}

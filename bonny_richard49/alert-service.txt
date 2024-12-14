@@ -1,0 +1,263 @@
+<?php
+
+namespace App\Core\System;
+
+use App\Core\Interfaces\{
+    AlertServiceInterface,
+    NotificationInterface
+};
+use App\Core\Security\SecurityContext;
+use Illuminate\Support\Facades\DB;
+use Psr\Log\LoggerInterface;
+
+class AlertService implements AlertServiceInterface
+{
+    private NotificationInterface $notifier;
+    private LoggerInterface $logger;
+    private array $config;
+
+    private const CRITICAL_ALERTS = [
+        'security_breach',
+        'system_failure',
+        'data_corruption',
+        'service_down',
+        'critical_error'
+    ];
+
+    private const ALERT_LEVELS = [
+        'emergency' => 0,
+        'critical' => 1,
+        'error' => 2,
+        'warning' => 3,
+        'notice' => 4
+    ];
+
+    public function __construct(
+        NotificationInterface $notifier,
+        LoggerInterface $logger
+    ) {
+        $this->notifier = $notifier;
+        $this->logger = $logger;
+        $this->config = config('alerts');
+    }
+
+    public function triggerAlert(string $type, array $data, string $level = 'error'): void
+    {
+        try {
+            DB::beginTransaction();
+
+            // Create alert record
+            $alertId = $this->createAlertRecord($type, $data, $level);
+
+            // Process alert based on level
+            $this->processAlert($alertId, $type, $data, $level);
+
+            // Send notifications
+            $this->sendAlertNotifications($type, $data, $level);
+
+            // Log alert
+            $this->logAlert($type, $data, $level);
+
+            DB::commit();
+        } catch (\Exception $e) {
+            DB::rollBack();
+            $this->handleAlertError($e, $type, $data);
+        }
+    }
+
+    public function handleSecurityAlert(SecurityContext $context, array $data): void
+    {
+        try {
+            // Create security alert
+            $alertId = $this->createSecurityAlert($context, $data);
+
+            // Process security measures
+            $this->processSecurityMeasures($alertId, $context, $data);
+
+            // Notify security team
+            $this->notifySecurityTeam($alertId, $context, $data);
+
+            // Log security alert
+            $this->logSecurityAlert($context, $data);
+        } catch (\Exception $e) {
+            $this->handleSecurityAlertError($e, $context, $data);
+        }
+    }
+
+    protected function createAlertRecord(string $type, array $data, string $level): int
+    {
+        return DB::table('alerts')->insertGetId([
+            'type' => $type,
+            'data' => json_encode($data),
+            'level' => self::ALERT_LEVELS[$level] ?? self::ALERT_LEVELS['error'],
+            'status' => 'new',
+            'created_at' => time()
+        ]);
+    }
+
+    protected function processAlert(int $alertId, string $type, array $data, string $level): void
+    {
+        // Handle critical alerts immediately
+        if (in_array($type, self::CRITICAL_ALERTS) || $level === 'emergency') {
+            $this->processCriticalAlert($alertId, $type, $data);
+        }
+
+        // Execute alert-specific handlers
+        $handler = $this->getAlertHandler($type);
+        if ($handler) {
+            $handler->handle($data);
+        }
+
+        // Update alert status
+        DB::table('alerts')->where('id', $alertId)->update([
+            'status' => 'processed',
+            'processed_at' => time()
+        ]);
+    }
+
+    protected function processCriticalAlert(int $alertId, string $type, array $data): void
+    {
+        // Create critical incident record
+        $incidentId = DB::table('critical_incidents')->insertGetId([
+            'alert_id' => $alertId,
+            'type' => $type,
+            'data' => json_encode($data),
+            'system_state' => json_encode($this->captureSystemState()),
+            'created_at' => time()
+        ]);
+
+        // Execute emergency procedures
+        $this->executeEmergencyProcedures($incidentId, $type, $data);
+
+        // Notify emergency contacts
+        $this->notifyEmergencyContacts($incidentId, $type, $data);
+    }
+
+    protected function sendAlertNotifications(string $type, array $data, string $level): void
+    {
+        $recipients = $this->getAlertRecipients($type, $level);
+
+        foreach ($recipients as $recipient) {
+            $this->notifier->send(
+                $recipient,
+                $this->formatAlertMessage($type, $data),
+                $this->getNotificationPriority($level)
+            );
+        }
+    }
+
+    protected function createSecurityAlert(SecurityContext $context, array $data): int
+    {
+        return DB::table('security_alerts')->insertGetId([
+            'context_id' => $context->getId(),
+            'type' => $data['type'],
+            'severity' => $data['severity'],
+            'details' => json_encode($data['details']),
+            'ip_address' => $context->getIpAddress(),
+            'user_id' => $context->getUserId(),
+            'created_at' => time()
+        ]);
+    }
+
+    protected function processSecurityMeasures(int $alertId, SecurityContext $context, array $data): void
+    {
+        // Implement security measures based on alert type
+        if ($data['severity'] === 'critical') {
+            // Lock down affected systems
+            $this->lockdownSystems($data['affected_systems']);
+            
+            // Block suspicious IPs
+            $this->blockSuspiciousIps($context->getIpAddress());
+            
+            // Revoke compromised tokens
+            $this->revokeCompromisedTokens($context);
+        }
+
+        // Update alert status
+        DB::table('security_alerts')
+            ->where('id', $alertId)
+            ->update(['status' => 'processed']);
+    }
+
+    protected function notifySecurityTeam(int $alertId, SecurityContext $context, array $data): void
+    {
+        $recipients = config('security.alert_recipients');
+
+        foreach ($recipients as $recipient) {
+            $this->notifier->sendSecurityAlert(
+                $recipient,
+                $this->formatSecurityAlert($alertId, $context, $data)
+            );
+        }
+    }
+
+    protected function getAlertHandler(string $type): ?AlertHandlerInterface
+    {
+        $handlers = config('alerts.handlers');
+        $handlerClass = $handlers[$type] ?? null;
+
+        return $handlerClass ? app($handlerClass) : null;
+    }
+
+    protected function getAlertRecipients(string $type, string $level): array
+    {
+        return array_merge(
+            $this->config['recipients'][$type] ?? [],
+            $this->config['recipients'][$level] ?? []
+        );
+    }
+
+    protected function getNotificationPriority(string $level): string
+    {
+        return $this->config['priorities'][$level] ?? 'normal';
+    }
+
+    protected function captureSystemState(): array
+    {
+        return [
+            'memory_usage' => memory_get_usage(true),
+            'cpu_usage' => sys_getloadavg()[0],
+            'disk_usage' => disk_free_space('/'),
+            'active_connections' => DB::table('sessions')->count(),
+            'error_count' => DB::table('error_logs')
+                ->where('created_at', '>', time() - 3600)
+                ->count()
+        ];
+    }
+
+    protected function executeEmergencyProcedures(int $incidentId, string $type, array $data): void
+    {
+        $procedures = $this->config['emergency_procedures'][$type] ?? [];
+        
+        foreach ($procedures as $procedure) {
+            try {
+                app($procedure)->execute($incidentId, $data);
+            } catch (\Exception $e) {
+                $this->logger->error("Emergency procedure failed: {$procedure}", [
+                    'incident_id' => $incidentId,
+                    'error' => $e->getMessage()
+                ]);
+            }
+        }
+    }
+
+    protected function handleAlertError(\Exception $e, string $type, array $data): void
+    {
+        $this->logger->error('Alert processing failed', [
+            'type' => $type,
+            'data' => $data,
+            'error' => $e->getMessage(),
+            'trace' => $e->getTraceAsString()
+        ]);
+    }
+
+    protected function handleSecurityAlertError(\Exception $e, SecurityContext $context, array $data): void
+    {
+        $this->logger->error('Security alert processing failed', [
+            'context' => $context->toArray(),
+            'data' => $data,
+            'error' => $e->getMessage(),
+            'trace' => $e->getTraceAsString()
+        ]);
+    }
+}

@@ -1,0 +1,194 @@
+// app/Core/Widget/Listeners/WidgetCacheListener.php
+<?php
+
+namespace App\Core\Widget\Listeners;
+
+use App\Core\Widget\Events\WidgetCreated;
+use App\Core\Widget\Events\WidgetUpdated;
+use App\Core\Widget\Events\WidgetDeleted;
+use Illuminate\Support\Facades\Cache;
+
+class WidgetCacheListener
+{
+    public function handleWidgetCreated(WidgetCreated $event): void
+    {
+        $this->clearWidgetCache($event->widget);
+        $this->clearAreaCache($event->widget->area);
+    }
+
+    public function handleWidgetUpdated(WidgetUpdated $event): void
+    {
+        $this->clearWidgetCache($event->widget);
+        $this->clearAreaCache($event->widget->area);
+    }
+
+    public function handleWidgetDeleted(WidgetDeleted $event): void
+    {
+        $this->clearWidgetCache($event->widget);
+        $this->clearAreaCache($event->widget->area);
+    }
+
+    protected function clearWidgetCache($widget): void
+    {
+        Cache::tags([
+            'widgets',
+            "widget:{$widget->id}",
+            "type:{$widget->type}"
+        ])->flush();
+    }
+
+    protected function clearAreaCache(string $area): void
+    {
+        Cache::tags([
+            'widgets',
+            "area:{$area}"
+        ])->flush();
+    }
+}
+
+// app/Core/Widget/Listeners/WidgetMetricsListener.php
+<?php
+
+namespace App\Core\Widget\Listeners;
+
+use App\Core\Widget\Events\WidgetViewed;
+use App\Core\Widget\Events\WidgetInteraction;
+use App\Core\Widget\Services\WidgetMetricsService;
+
+class WidgetMetricsListener
+{
+    public function __construct(private WidgetMetricsService $metricsService)
+    {
+    }
+
+    public function handleWidgetViewed(WidgetViewed $event): void
+    {
+        $this->metricsService->trackView(
+            $event->widget,
+            $event->user,
+            $event->metadata
+        );
+    }
+
+    public function handleWidgetInteraction(WidgetInteraction $event): void
+    {
+        $this->metricsService->trackInteraction(
+            $event->widget,
+            $event->user,
+            $event->action,
+            $event->metadata
+        );
+    }
+}
+
+// app/Core/Widget/Listeners/WidgetAuditListener.php
+<?php
+
+namespace App\Core\Widget\Listeners;
+
+use App\Core\Widget\Events\WidgetCreated;
+use App\Core\Widget\Events\WidgetUpdated;
+use App\Core\Widget\Events\WidgetDeleted;
+use Illuminate\Support\Facades\DB;
+
+class WidgetAuditListener
+{
+    public function handleWidgetCreated(WidgetCreated $event): void
+    {
+        $this->logAuditEvent($event->widget, 'created');
+    }
+
+    public function handleWidgetUpdated(WidgetUpdated $event): void
+    {
+        $this->logAuditEvent($event->widget, 'updated', [
+            'old_values' => $event->oldValues,
+            'new_values' => $event->newValues
+        ]);
+    }
+
+    public function handleWidgetDeleted(WidgetDeleted $event): void
+    {
+        $this->logAuditEvent($event->widget, 'deleted');
+    }
+
+    protected function logAuditEvent($widget, string $action, array $data = []): void
+    {
+        DB::table('widget_audit_logs')->insert([
+            'widget_id' => $widget->id,
+            'user_id' => auth()->id(),
+            'action' => $action,
+            'old_values' => $data['old_values'] ?? null,
+            'new_values' => $data['new_values'] ?? null,
+            'ip_address' => request()->ip(),
+            'user_agent' => request()->userAgent(),
+            'performed_at' => now()
+        ]);
+    }
+}
+
+// app/Core/Widget/Listeners/WidgetStateListener.php
+<?php
+
+namespace App\Core\Widget\Listeners;
+
+use App\Core\Widget\Events\WidgetUpdated;
+use App\Core\Widget\Services\WidgetStateService;
+
+class WidgetStateListener
+{
+    public function __construct(private WidgetStateService $stateService)
+    {
+    }
+
+    public function handle(WidgetUpdated $event): void
+    {
+        if ($event->oldValues !== $event->newValues) {
+            $this->stateService->saveState(
+                $event->widget,
+                $event->oldValues,
+                $event->newValues
+            );
+        }
+    }
+}
+
+// app/Core/Widget/Listeners/WidgetBackupListener.php
+<?php
+
+namespace App\Core\Widget\Listeners;
+
+use App\Core\Widget\Events\WidgetUpdated;
+use App\Core\Widget\Services\WidgetBackupService;
+
+class WidgetBackupListener
+{
+    public function __construct(private WidgetBackupService $backupService)
+    {
+    }
+
+    public function handle(WidgetUpdated $event): void
+    {
+        if ($this->shouldCreateBackup($event)) {
+            $this->backupService->createBackup($event->widget);
+        }
+    }
+
+    protected function shouldCreateBackup(WidgetUpdated $event): bool
+    {
+        // Check if significant changes were made
+        return $this->hasSignificantChanges($event->oldValues, $event->newValues);
+    }
+
+    protected function hasSignificantChanges(array $old, array $new): bool
+    {
+        $significantFields = ['type', 'settings', 'visibility_rules', 'permissions'];
+
+        foreach ($significantFields as $field) {
+            if (isset($old[$field], $new[$field]) && $old[$field] !== $new[$field]) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+}

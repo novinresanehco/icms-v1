@@ -1,0 +1,103 @@
+<?php
+
+namespace App\Http\Middleware;
+
+use App\Core\Security\SecurityManager;
+use App\Core\Performance\PerformanceMonitor;
+use App\Core\Cache\CacheManager;
+use Closure;
+use Illuminate\Http\Request;
+
+class ContentSecurityMiddleware
+{
+    private SecurityManager $security;
+    private PerformanceMonitor $monitor;
+    private CacheManager $cache;
+
+    public function __construct(
+        SecurityManager $security,
+        PerformanceMonitor $monitor,
+        CacheManager $cache
+    ) {
+        $this->security = $security;
+        $this->monitor = $monitor;
+        $this->cache = $cache;
+    }
+
+    public function handle(Request $request, Closure $next)
+    {
+        $monitoringId = $this->monitor->startOperation('content.middleware');
+
+        try {
+            $this->validateRequest($request);
+            $this->checkRateLimits($request);
+            $this->validatePermissions($request);
+
+            $response = $next($request);
+
+            $this->validateResponse($response);
+            $this->monitor->endOperation($monitoringId);
+
+            return $response;
+
+        } catch (\Exception $e) {
+            $this->monitor->endOperation($monitoringId);
+            throw $e;
+        }
+    }
+
+    private function validateRequest(Request $request): void
+    {
+        $this->security->validateOperation($request->route()->getName());
+        
+        $cacheKey = $this->generateRequestCacheKey($request);
+        $this->checkRequestDuplication($cacheKey);
+        
+        $this->cache->set($cacheKey, true, 60);
+    }
+
+    private function checkRateLimits(Request $request): void
+    {
+        $key = sprintf(
+            'rate_limit:%s:%s',
+            $request->route()->getName(),
+            $request->ip()
+        );
+
+        $attempts = $this->cache->increment($key);
+        
+        if ($attempts > config('content.rate_limits.' . $request->method(), 60)) {
+            throw new RateLimitException();
+        }
+    }
+
+    private function validatePermissions(Request $request): void
+    {
+        if (!$this->security->checkPermissions($request->route()->getName())) {
+            throw new UnauthorizedException();
+        }
+    }
+
+    private function validateResponse($response): void
+    {
+        if ($response->getStatusCode() >= 500) {
+            throw new CriticalResponseException();
+        }
+    }
+
+    private function generateRequestCacheKey(Request $request): string
+    {
+        return md5(
+            $request->route()->getName() . 
+            $request->ip() . 
+            json_encode($request->all())
+        );
+    }
+
+    private function checkRequestDuplication(string $key): void
+    {
+        if ($this->cache->has($key)) {
+            throw new DuplicateRequestException();
+        }
+    }
+}

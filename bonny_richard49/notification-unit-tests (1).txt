@@ -1,0 +1,74 @@
+<?php
+
+namespace Tests\Unit\Notification;
+
+use Tests\TestCase;
+use App\Core\Notification\Services\{
+    NotificationService,
+    NotificationTemplateService
+};
+use App\Core\Notification\Repositories\{
+    NotificationRepository,
+    NotificationTemplateRepository
+};
+use App\Core\Notification\Channels\ChannelManager;
+use App\Core\Notification\Models\{
+    Notification,
+    NotificationTemplate
+};
+use App\Core\Notification\Exceptions\{
+    NotificationValidationException,
+    NotificationTemplateNotFoundException,
+    NotificationChannelNotConfiguredException
+};
+use Illuminate\Foundation\Testing\RefreshDatabase;
+use Mockery;
+
+class NotificationServiceTest extends TestCase
+{
+    use RefreshDatabase;
+
+    protected $notificationService;
+    protected $templateService;
+    protected $channelManager;
+    protected $repository;
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        $this->repository = Mockery::mock(NotificationRepository::class);
+        $this->templateService = Mockery::mock(NotificationTemplateService::class);
+        $this->channelManager = Mockery::mock(ChannelManager::class);
+
+        $this->notificationService = new NotificationService(
+            $this->repository,
+            $this->templateService,
+            $this->channelManager
+        );
+    }
+
+    /** @test */
+    public function it_validates_notification_data_before_sending()
+    {
+        $this->expectException(NotificationValidationException::class);
+
+        $template = new NotificationTemplate([
+            'validation_rules' => [
+                'order_id' => 'required|integer'
+            ]
+        ]);
+
+        $this->templateService->shouldReceive('findTemplate')
+            ->with('order-shipped')
+            ->andReturn($template);
+
+        $this->notificationService->send(
+            $this->createUser(),
+            'order-shipped',
+            ['status' => 'shipped'] // Missing required order_id
+        );
+    }
+
+    /** @test */
+    public function

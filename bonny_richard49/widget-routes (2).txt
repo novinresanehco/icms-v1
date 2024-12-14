@@ -1,0 +1,14 @@
+// routes/api.php
+Route::middleware(['auth:sanctum'])
+    ->prefix('api')
+    ->group(function () {
+        Route::apiResource('widgets', 'App\Core\Widget\Controllers\Api\WidgetController');
+        Route::put('widgets/order', 'App\Core\Widget\Controllers\Api\WidgetController@updateOrder');
+        Route::put('widgets/{id}/visibility', 'App\Core\Widget\Controllers\Api\WidgetController@updateVisibility');
+    });
+
+// routes/web.php
+Route::middleware(['auth', 'verified'])
+    ->prefix('admin')
+    ->group(function () {
+        Route::resource('widgets', 'App\Core\Widget\Controllers\Admin\Widget

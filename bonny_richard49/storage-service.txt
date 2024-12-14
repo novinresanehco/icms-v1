@@ -1,0 +1,98 @@
+<?php
+
+namespace App\Core\System;
+
+use App\Core\Interfaces\StorageServiceInterface;
+use Illuminate\Support\Facades\Storage;
+use Psr\Log\LoggerInterface;
+
+class StorageService implements StorageServiceInterface
+{
+    private LoggerInterface $logger;
+    private array $config;
+    private ?string $disk;
+
+    private const RETRY_ATTEMPTS = 3;
+    private const RETRY_DELAY = 100; // milliseconds
+    private const CHUNK_SIZE = 1048576; // 1MB
+    private const READ_TIMEOUT = 30;
+    private const WRITE_TIMEOUT = 60;
+
+    public function __construct(
+        LoggerInterface $logger,
+        ?string $disk = null
+    ) {
+        $this->logger = $logger;
+        $this->config = config('filesystems');
+        $this->disk = $disk;
+    }
+
+    public function get(string $path): string
+    {
+        return $this->retryOperation(function() use ($path) {
+            if (!$this->exists($path)) {
+                throw new StorageException("File not found: {$path}");
+            }
+
+            return Storage::disk($this->disk)->get($path);
+        });
+    }
+
+    public function put(string $path, string $contents): bool
+    {
+        return $this->retryOperation(function() use ($path, $contents) {
+            $result = Storage::disk($this->disk)->put($path, $contents);
+            
+            if ($result && !$this->verifyFile($path, $contents)) {
+                throw new StorageException("File verification failed: {$path}");
+            }
+            
+            return $result;
+        });
+    }
+
+    public function putFile(string $path, $file): string
+    {
+        return $this->retryOperation(function() use ($path, $file) {
+            $path = Storage::disk($this->disk)->putFile($path, $file);
+            
+            if (!$path || !$this->verifyFileUpload($path, $file)) {
+                throw new StorageException('File upload failed');
+            }
+            
+            return $path;
+        });
+    }
+
+    public function delete(string $path): bool
+    {
+        return $this->retryOperation(function() use ($path) {
+            if (!$this->exists($path)) {
+                return true;
+            }
+
+            return Storage::disk($this->disk)->delete($path);
+        });
+    }
+
+    public function exists(string $path): bool
+    {
+        return $this->retryOperation(function() use ($path) {
+            return Storage::disk($this->disk)->exists($path);
+        });
+    }
+
+    public function size(string $path): int
+    {
+        return $this->retryOperation(function() use ($path) {
+            if (!$this->exists($path)) {
+                throw new StorageException("File not found: {$path}");
+            }
+
+            return Storage::disk($this->disk)->size($path);
+        });
+    }
+
+    public function lastModified(string $path): int
+    {
+        return $this->retry

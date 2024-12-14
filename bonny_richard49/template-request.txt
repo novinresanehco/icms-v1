@@ -1,0 +1,98 @@
+<?php
+
+namespace App\Http\Requests;
+
+use Illuminate\Foundation\Http\FormRequest;
+use App\Core\Validation\ValidationService;
+
+class TemplateRequest extends FormRequest
+{
+    protected ValidationService $validator;
+
+    public function __construct(ValidationService $validator)
+    {
+        $this->validator = $validator;
+    }
+
+    public function authorize(): bool
+    {
+        return true;
+    }
+
+    public function rules(): array
+    {
+        return match ($this->route()->getName()) {
+            'templates.render' => $this->renderRules(),
+            'templates.compile' => $this->compileRules(),
+            'templates.validate' => $this->validateRules(),
+            'templates.clear_cache' => $this->clearCacheRules(),
+            default => []
+        };
+    }
+
+    protected function renderRules(): array
+    {
+        return [
+            'template' => 'required|string|max:255',
+            'data' => 'sometimes|array',
+            'data.*' => 'required'
+        ];
+    }
+
+    protected function compileRules(): array
+    {
+        return [
+            'template' => 'required|string|max:255',
+            'data' => 'sometimes|array',
+            'data.*' => 'required'
+        ];
+    }
+
+    protected function validateRules(): array
+    {
+        return [
+            'template' => 'required|string|max:255'
+        ];
+    }
+
+    protected function clearCacheRules(): array
+    {
+        return [
+            'template' => 'sometimes|string|max:255'
+        ];
+    }
+
+    public function messages(): array
+    {
+        return [
+            'template.required' => 'Template name is required',
+            'template.string' => 'Template name must be a string',
+            'template.max' => 'Template name cannot exceed 255 characters',
+            'data.array' => 'Template data must be an array',
+            'data.*.required' => 'All template data values are required'
+        ];
+    }
+
+    protected function prepareForValidation(): void
+    {
+        if ($this->has('data') && is_string($this->input('data'))) {
+            $this->merge([
+                'data' => json_decode($this->input('data'), true)
+            ]);
+        }
+    }
+
+    protected function passedValidation(): void
+    {
+        if ($this->has('data')) {
+            $this->sanitizeData();
+        }
+    }
+
+    private function sanitizeData(): void
+    {
+        $data = $this->input('data');
+        $sanitized = $this->validator->sanitizeData($data);
+        $this->merge(['data' => $sanitized]);
+    }
+}

@@ -1,0 +1,160 @@
+<?php
+
+namespace App\Core\Notification\Analytics\Services;
+
+use App\Core\Notification\Analytics\Models\AlertConfiguration;
+use App\Core\Notification\Analytics\Events\AlertDeliveryFailedEvent;
+use App\Core\Notification\Analytics\Contracts\AlertChannelInterface;
+use Illuminate\Support\Facades\Log;
+use Exception;
+
+class AlertChannelManager
+{
+    private array $channels = [];
+    private array $fallbackChannels = [];
+
+    public function registerChannel(string $name, AlertChannelInterface $channel): void
+    {
+        $this->channels[$name] = $channel;
+    }
+
+    public function registerFallbackChannel(string $name, AlertChannelInterface $channel): void
+    {
+        $this->fallbackChannels[$name] = $channel;
+    }
+
+    public function sendAlert(
+        AlertConfiguration $config,
+        string $message,
+        array $data = [],
+        array $options = []
+    ): array {
+        $results = [];
+        $errors = [];
+
+        // Get enabled channels for this alert
+        $enabledChannels = array_intersect(
+            array_keys($this->channels),
+            $config->channels ?? []
+        );
+
+        foreach ($enabledChannels as $channelName) {
+            try {
+                $channel = $this->channels[$channelName];
+                $channelOptions = $this->getChannelOptions($config, $channelName, $options);
+                
+                $result = $channel->send($message, $data, $channelOptions);
+                $results[$channelName] = $result;
+
+            } catch (Exception $e) {
+                $errors[$channelName] = $e->getMessage();
+                $this->handleChannelError($config, $channelName, $e, $data);
+                
+                // Try fallback if available
+                if ($fallbackResult = $this->tryFallbackChannel($config, $message, $data, $channelName)) {
+                    $results[$channelName] = $fallbackResult;
+                }
+            }
+        }
+
+        $this->logAlertDelivery($config, $results, $errors);
+
+        return [
+            'success' => !empty($results),
+            'results' => $results,
+            'errors' => $errors
+        ];
+    }
+
+    private function tryFallbackChannel(
+        AlertConfiguration $config,
+        string $message,
+        array $data,
+        string $failedChannel
+    ): ?array {
+        if (!isset($this->fallbackChannels[$failedChannel])) {
+            return null;
+        }
+
+        try {
+            $fallbackChannel = $this->fallbackChannels[$failedChannel];
+            return $fallbackChannel->send($message, $data, [
+                'original_channel' => $failedChannel,
+                'is_fallback' => true
+            ]);
+        } catch (Exception $e) {
+            Log::error('Fallback channel failed', [
+                'channel' => $failedChannel,
+                'error' => $e->getMessage(),
+                'alert_config' => $config->id
+            ]);
+            return null;
+        }
+    }
+
+    private function handleChannelError(
+        AlertConfiguration $config,
+        string $channel,
+        Exception $error,
+        array $context
+    ): void {
+        event(new AlertDeliveryFailedEvent(
+            $config,
+            $channel,
+            $error->getMessage(),
+            $context
+        ));
+
+        Log::error('Alert delivery failed', [
+            'channel' => $channel,
+            'error' => $error->getMessage(),
+            'alert_config' => $config->id,
+            'context' => $context
+        ]);
+    }
+
+    private function getChannelOptions(
+        AlertConfiguration $config,
+        string $channel,
+        array $baseOptions
+    ): array {
+        return array_merge(
+            $baseOptions,
+            $config->metadata['channel_options'][$channel] ?? [],
+            [
+                'severity' => $config->severity,
+                'metric_name' => $config->metric_name
+            ]
+        );
+    }
+
+    private function logAlertDelivery(
+        AlertConfiguration $config,
+        array $results,
+        array $errors
+    ): void {
+        $logData = [
+            'alert_config' => $config->id,
+            'metric' => $config->metric_name,
+            'severity' => $config->severity,
+            'channels' => array_keys($results),
+            'success_count' => count($results),
+            'error_count' => count($errors)
+        ];
+
+        if (!empty($errors)) {
+            $logData['errors'] = $errors;
+            Log::warning('Alert delivery completed with errors', $logData);
+        } else {
+            Log::info('Alert delivery completed successfully', $logData);
+        }
+    }
+
+    public function getAvailableChannels(): array
+    {
+        return array_keys($this->channels);
+    }
+
+    public function getChannelStatus(string $channel): array
+    {
+        if (!isset($

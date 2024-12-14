@@ -1,0 +1,150 @@
+<?php
+
+namespace App\Core\Templates;
+
+use App\Core\Security\SecurityManager;
+use App\Core\Cache\CacheManager;
+use App\Core\Events\EventDispatcher;
+use Illuminate\Support\Facades\View;
+
+class TemplateManager
+{
+    private SecurityManager $security;
+    private CacheManager $cache;
+    private EventDispatcher $events;
+    private array $config;
+
+    public function __construct(
+        SecurityManager $security,
+        CacheManager $cache,
+        EventDispatcher $events,
+        array $config
+    ) {
+        $this->security = $security;
+        $this->cache = $cache;
+        $this->events = $events;
+        $this->config = $config;
+    }
+
+    public function render(string $template, array $data = []): string
+    {
+        $this->security->validateOperation('template.render');
+        $this->validateTemplate($template);
+
+        $cacheKey = $this->getCacheKey($template, $data);
+        
+        return $this->cache->remember($cacheKey, function() use ($template, $data) {
+            $compiled = $this->compile($template, $data);
+            $this->events->dispatch('template.rendered', [
+                'template' => $template,
+                'data' => $data
+            ]);
+            return $compiled;
+        });
+    }
+
+    public function compile(string $template, array $data = []): string
+    {
+        $this->security->validateOperation('template.compile');
+        $this->validateTemplate($template);
+
+        $view = View::make($template, $this->prepareData($data));
+        return $view->render();
+    }
+
+    public function extend(string $name, callable $extension): void
+    {
+        $this->security->validateOperation('template.extend');
+        
+        View::composer($name, function($view) use ($extension) {
+            $extension($view);
+        });
+
+        $this->events->dispatch('template.extended', [
+            'name' => $name,
+            'extension' => get_class($extension)
+        ]);
+    }
+
+    public function addGlobal(string $key, $value): void
+    {
+        $this->security->validateOperation('template.global');
+        View::share($key, $value);
+    }
+
+    public function clearCache(string $template = null): void
+    {
+        $this->security->validateOperation('template.cache_clear');
+
+        if ($template) {
+            $this->cache->tags(['templates', $template])->flush();
+        } else {
+            $this->cache->tags(['templates'])->flush();
+        }
+
+        $this->events->dispatch('template.cache_cleared', [
+            'template' => $template
+        ]);
+    }
+
+    private function validateTemplate(string $template): void
+    {
+        if (!View::exists($template)) {
+            throw new TemplateException("Template not found: {$template}");
+        }
+
+        if (!$this->isAllowedTemplate($template)) {
+            throw new SecurityException("Template access denied: {$template}");
+        }
+    }
+
+    private function isAllowedTemplate(string $template): bool
+    {
+        $allowedPaths = $this->config['allowed_paths'] ?? [];
+        $deniedPaths = $this->config['denied_paths'] ?? [];
+
+        foreach ($deniedPaths as $path) {
+            if (str_starts_with($template, $path)) {
+                return false;
+            }
+        }
+
+        foreach ($allowedPaths as $path) {
+            if (str_starts_with($template, $path)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private function getCacheKey(string $template, array $data): string
+    {
+        return 'template:' . md5($template . serialize($data));
+    }
+
+    private function prepareData(array $data): array
+    {
+        foreach ($data as $key => $value) {
+            if (is_callable($value)) {
+                $data[$key] = $this->security->validateCallback($value);
+            }
+        }
+
+        return array_merge(View::getShared(), $data);
+    }
+
+    public function validateSyntax(string $template): bool
+    {
+        try {
+            $this->compile($template);
+            return true;
+        } catch (\Exception $e) {
+            $this->events->dispatch('template.syntax_error', [
+                'template' => $template,
+                'error' => $e->getMessage()
+            ]);
+            return false;
+        }
+    }
+}

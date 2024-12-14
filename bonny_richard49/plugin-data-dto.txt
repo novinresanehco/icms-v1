@@ -1,0 +1,55 @@
+<?php
+
+namespace App\Core\Plugin\DTO;
+
+use App\Core\Shared\DTO\DataTransferObject;
+use JsonSerializable;
+
+class PluginData extends DataTransferObject implements JsonSerializable
+{
+    public string $name;
+    public string $identifier;
+    public string $description;
+    public string $version;
+    public string $author;
+    public ?string $homepage;
+    public array $dependencies;
+    public ?array $config;
+    public array $hooks;
+    public array $providers;
+    public array $migrations;
+    public array $assets;
+
+    public function __construct(array $data)
+    {
+        $this->name = $data['name'];
+        $this->identifier = $data['identifier'];
+        $this->description = $data['description'];
+        $this->version = $data['version'];
+        $this->author = $data['author'];
+        $this->homepage = $data['homepage'] ?? null;
+        $this->dependencies = $data['dependencies'] ?? [];
+        $this->config = $data['config'] ?? [];
+        $this->hooks = $data['hooks'] ?? [];
+        $this->providers = $data['providers'] ?? [];
+        $this->migrations = $data['migrations'] ?? [];
+        $this->assets = $data['assets'] ?? [];
+    }
+
+    public function validate(): array
+    {
+        $errors = [];
+
+        if (empty($this->name)) {
+            $errors['name'] = 'Plugin name is required';
+        }
+
+        if (empty($this->identifier)) {
+            $errors['identifier'] = 'Plugin identifier is required';
+        } elseif (!preg_match('/^[a-z0-9\-\.]+$/', $this->identifier)) {
+            $errors['identifier'] = 'Plugin identifier can only contain lowercase letters, numbers, dots and dashes';
+        }
+
+        if (empty($this->version)) {
+            $errors['version'] = 'Plugin version is required';
+        } elseif (!preg_match('/^\d+

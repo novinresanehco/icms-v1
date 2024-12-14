@@ -1,0 +1,130 @@
+// app/Core/Widget/Resolvers/WidgetTypeResolver.php
+<?php
+
+namespace App\Core\Widget\Resolvers;
+
+use App\Core\Widget\Models\Widget;
+use App\Core\Widget\Exceptions\UnknownWidgetTypeException;
+
+class WidgetTypeResolver
+{
+    private array $types = [];
+
+    public function register(string $type, string $class): void
+    {
+        $this->types[$type] = $class;
+    }
+
+    public function resolve(string $type): string
+    {
+        if (!isset($this->types[$type])) {
+            throw new UnknownWidgetTypeException("Unknown widget type: {$type}");
+        }
+
+        return $this->types[$type];
+    }
+
+    public function getAvailableTypes(): array
+    {
+        return array_keys($this->types);
+    }
+}
+
+// app/Core/Widget/Resolvers/WidgetViewResolver.php
+<?php
+
+namespace App\Core\Widget\Resolvers;
+
+use App\Core\Widget\Models\Widget;
+use Illuminate\Support\Facades\View;
+
+class WidgetViewResolver
+{
+    public function resolve(Widget $widget): string
+    {
+        $views = [
+            "widgets.types.{$widget->type}",
+            "widgets.types.default",
+            "widgets.default"
+        ];
+
+        foreach ($views as $view) {
+            if (View::exists($view)) {
+                return $view;
+            }
+        }
+
+        return "widgets.default";
+    }
+}
+
+// app/Core/Widget/Resolvers/WidgetSettingsResolver.php
+<?php
+
+namespace App\Core\Widget\Resolvers;
+
+use App\Core\Widget\Models\Widget;
+
+class WidgetSettingsResolver
+{
+    public function resolve(Widget $widget): array
+    {
+        $defaultSettings = $this->getDefaultSettings($widget->type);
+        return array_merge($defaultSettings, $widget->settings ?? []);
+    }
+
+    private function getDefaultSettings(string $type): array
+    {
+        return match($type) {
+            'content' => [
+                'show_title' => true,
+                'show_date' => true,
+                'max_items' => 5
+            ],
+            'menu' => [
+                'depth' => 1,
+                'show_description' => false
+            ],
+            'social' => [
+                'show_icons' => true,
+                'target' => '_blank'
+            ],
+            default => []
+        };
+    }
+}
+
+// app/Core/Widget/Resolvers/WidgetPermissionResolver.php
+<?php
+
+namespace App\Core\Widget\Resolvers;
+
+use App\Core\Widget\Models\Widget;
+use Illuminate\Contracts\Auth\Authenticatable;
+
+class WidgetPermissionResolver
+{
+    public function resolve(Widget $widget, Authenticatable $user): bool
+    {
+        if (empty($widget->permissions)) {
+            return true;
+        }
+
+        foreach ($widget->permissions as $permission) {
+            if (!$this->checkPermission($user, $permission)) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private function checkPermission(Authenticatable $user, array $permission): bool
+    {
+        return match($permission['type']) {
+            'role' => $user->hasRole($permission['value']),
+            'permission' => $user->can($permission['value']),
+            'custom' => $this->checkCustomRule($user, $permission['value']),
+            default => false
+        };
+    }

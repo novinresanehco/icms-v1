@@ -1,0 +1,37 @@
+<?php
+
+namespace App\Core\ActivityLog\DTO;
+
+use App\Core\Shared\DTO\DataTransferObject;
+use JsonSerializable;
+
+class ActivityData extends DataTransferObject implements JsonSerializable
+{
+    public string $type;
+    public string $description;
+    public int $userId;
+    public ?string $modelType;
+    public ?int $modelId;
+    public ?array $data;
+    public ?string $ipAddress;
+    public ?string $userAgent;
+    public ?array $metadata;
+
+    public function __construct(array $data)
+    {
+        $this->type = $data['type'];
+        $this->description = $data['description'];
+        $this->userId = $data['user_id'];
+        $this->modelType = $data['model_type'] ?? null;
+        $this->modelId = $data['model_id'] ?? null;
+        $this->data = $data['data'] ?? null;
+        $this->ipAddress = $data['ip_address'] ?? null;
+        $this->userAgent = $data['user_agent'] ?? null;
+        $this->metadata = $data['metadata'] ?? null;
+    }
+
+    public function validate(): array
+    {
+        $errors = [];
+
+        if (empty($this->

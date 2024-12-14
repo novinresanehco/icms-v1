@@ -1,0 +1,158 @@
+<?php
+
+namespace App\Core\Backup\Services;
+
+class StorageManager
+{
+    protected array $drivers = [];
+    protected array $configs;
+    protected Filesystem $filesystem;
+
+    public function __construct(array $configs, Filesystem $filesystem)
+    {
+        $this->configs = $configs;
+        $this->filesystem = $filesystem;
+    }
+
+    public function store(Backup $backup): void
+    {
+        foreach ($this->getActiveDrivers() as $driver) {
+            $driver->store($backup);
+        }
+    }
+
+    public function load(string $backupId): Backup
+    {
+        foreach ($this->getActiveDrivers() as $driver) {
+            if ($backup = $driver->find($backupId)) {
+                return $backup;
+            }
+        }
+
+        throw new BackupNotFoundException("Backup not found: {$backupId}");
+    }
+
+    public function listBackups(array $filters = []): Collection
+    {
+        $backups = collect();
+
+        foreach ($this->getActiveDrivers() as $driver) {
+            $backups = $backups->merge($driver->list($filters));
+        }
+
+        return $backups->sortByDesc('created_at');
+    }
+
+    public function delete(string $backupId): bool
+    {
+        $success = false;
+
+        foreach ($this->getActiveDrivers() as $driver) {
+            if ($driver->delete($backupId)) {
+                $success = true;
+            }
+        }
+
+        return $success;
+    }
+
+    protected function getActiveDrivers(): array
+    {
+        $activeDrivers = [];
+
+        foreach ($this->configs as $config) {
+            if ($config['active'] ?? false) {
+                $activeDrivers[] = $this->getDriver($config['driver']);
+            }
+        }
+
+        return $activeDrivers;
+    }
+
+    protected function getDriver(string $name): BackupDriver
+    {
+        if (!isset($this->drivers[$name])) {
+            $this->drivers[$name] = $this->createDriver($name);
+        }
+
+        return $this->drivers[$name];
+    }
+}
+
+namespace App\Core\Backup\Services;
+
+class DataValidator
+{
+    protected array $validators = [];
+    protected array $rules;
+
+    public function verify(Backup $backup): BackupVerification
+    {
+        $verification = new BackupVerification($backup);
+
+        // Verify metadata
+        $this->verifyMetadata($backup, $verification);
+
+        // Verify components
+        foreach ($backup->getComponents() as $component => $metadata) {
+            $this->verifyComponent($component, $metadata, $verification);
+        }
+
+        // Verify data integrity
+        $this->verifyDataIntegrity($backup, $verification);
+
+        return $verification;
+    }
+
+    protected function verifyMetadata(Backup $backup, BackupVerification $verification): void
+    {
+        $metadata = $backup->getMetadata();
+
+        // Check required fields
+        foreach ($this->rules['metadata'] as $field => $rule) {
+            if (!isset($metadata[$field])) {
+                $verification->addError("Missing required metadata field: {$field}");
+            }
+        }
+
+        // Verify version compatibility
+        if (!$this->isVersionCompatible($metadata['version'])) {
+            $verification->addWarning('Backup version might not be compatible');
+        }
+
+        // Verify checksum
+        if (!$this->verifyChecksum($backup)) {
+            $verification->addError('Backup checksum verification failed');
+        }
+    }
+
+    protected function verifyComponent(
+        string $component,
+        array $metadata,
+        BackupVerification $verification
+    ): void {
+        if (isset($this->validators[$component])) {
+            $this->validators[$component]->verify($metadata, $verification);
+        }
+    }
+
+    protected function verifyDataIntegrity(Backup $backup, BackupVerification $verification): void
+    {
+        // Verify database integrity
+        if ($backup->hasComponent('database')) {
+            $this->verifyDatabaseIntegrity($backup, $verification);
+        }
+
+        // Verify file integrity
+        if ($backup->hasComponent('files')) {
+            $this->verifyFileIntegrity($backup, $verification);
+        }
+    }
+
+    protected function verifyDatabaseIntegrity(Backup $backup, BackupVerification $verification): void
+    {
+        $dbMetadata = $backup->getComponent('database');
+
+        // Verify table count
+        if ($dbMetadata['table_count'] !== count($dbMetadata['tables'])) {
+            $verification->ad

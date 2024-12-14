@@ -1,0 +1,78 @@
+<?php
+
+use Illuminate\Database\Migrations\Migration;
+use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\Schema;
+
+class CreateNotificationsTable extends Migration
+{
+    /**
+     * Run the migrations.
+     *
+     * @return void
+     */
+    public function up(): void
+    {
+        Schema::create('notifications', function (Blueprint $table) {
+            $table->uuid('id')->primary();
+            $table->string('type');
+            $table->morphs('notifiable');
+            $table->json('data');
+            $table->timestamp('read_at')->nullable();
+            $table->string('status')->default('pending');
+            $table->timestamp('scheduled_at')->nullable();
+            $table->timestamp('delivered_at')->nullable();
+            $table->text('error')->nullable();
+            $table->timestamps();
+            $table->softDeletes();
+
+            // Indexes for performance
+            $table->index(['notifiable_type', 'notifiable_id', 'status']);
+            $table->index(['type', 'status']);
+            $table->index('scheduled_at');
+            $table->index('read_at');
+        });
+
+        Schema::create('notification_preferences', function (Blueprint $table) {
+            $table->id();
+            $table->morphs('notifiable');
+            $table->string('channel');
+            $table->boolean('enabled')->default(true);
+            $table->json('settings')->nullable();
+            $table->timestamps();
+
+            // Unique constraint
+            $table->unique(['notifiable_type', 'notifiable_id', 'channel']);
+            
+            // Index for lookups
+            $table->index(['channel', 'enabled']);
+        });
+
+        Schema::create('notification_templates', function (Blueprint $table) {
+            $table->id();
+            $table->string('name')->unique();
+            $table->string('type');
+            $table->json('channels');
+            $table->json('content');
+            $table->json('metadata')->nullable();
+            $table->boolean('active')->default(true);
+            $table->timestamps();
+            $table->softDeletes();
+
+            // Indexes
+            $table->index(['type', 'active']);
+        });
+    }
+
+    /**
+     * Reverse the migrations.
+     *
+     * @return void
+     */
+    public function down(): void
+    {
+        Schema::dropIfExists('notification_templates');
+        Schema::dropIfExists('notification_preferences');
+        Schema::dropIfExists('notifications');
+    }
+}

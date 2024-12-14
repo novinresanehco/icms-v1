@@ -1,0 +1,99 @@
+<?php
+
+namespace App\Core\Logging;
+
+use App\Core\Contracts\AuditInterface;
+use App\Core\Security\SecurityManager;
+use Illuminate\Support\Facades\Log;
+use Monolog\Logger;
+
+class AuditLogger implements AuditInterface
+{
+    protected SecurityManager $security;
+    protected Logger $logger;
+    protected array $sensitiveFields = [];
+
+    public function __construct(
+        SecurityManager $security,
+        Logger $logger,
+        array $sensitiveFields = []
+    ) {
+        $this->security = $security;
+        $this->logger = $logger;
+        $this->sensitiveFields = $sensitiveFields;
+    }
+
+    public function logSecurityEvent(string $event, array $context = []): void
+    {
+        $this->logEvent('security', $event, $context);
+    }
+
+    public function logOperationEvent(string $event, array $context = []): void
+    {
+        $this->logEvent('operation', $event, $context);
+    }
+
+    public function logSystemEvent(string $event, array $context = []): void
+    {
+        $this->logEvent('system', $event, $context);
+    }
+
+    public function logSecurityViolation(\Exception $e, array $context = []): void
+    {
+        $this->logger->critical('Security violation detected', [
+            'exception' => [
+                'message' => $e->getMessage(),
+                'code' => $e->getCode(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
+                'trace' => $e->getTraceAsString()
+            ],
+            'context' => $this->sanitizeContext($context),
+            'security_context' => $this->security->getSecurityContext(),
+            'timestamp' => microtime(true),
+            'request_id' => request()->id()
+        ]);
+    }
+
+    public function logUnauthorizedAccess(array $context = []): void
+    {
+        $this->logger->warning('Unauthorized access attempt', [
+            'context' => $this->sanitizeContext($context),
+            'security_context' => $this->security->getSecurityContext(),
+            'timestamp' => microtime(true),
+            'request_id' => request()->id()
+        ]);
+    }
+
+    public function logValidationFailure(array $data, array $errors): void
+    {
+        $this->logger->warning('Validation failure', [
+            'data' => $this->sanitizeContext($data),
+            'errors' => $errors,
+            'timestamp' => microtime(true),
+            'request_id' => request()->id()
+        ]);
+    }
+
+    protected function logEvent(string $type, string $event, array $context = []): void
+    {
+        $logData = [
+            'type' => $type,
+            'event' => $event,
+            'context' => $this->sanitizeContext($context),
+            'security_context' => $this->security->getSecurityContext(),
+            'timestamp' => microtime(true),
+            'request_id' => request()->id(),
+            'user_id' => auth()->id() ?? 'system',
+            'ip' => request()->ip()
+        ];
+
+        $this->logger->info("$type.$event", $logData);
+        $this->storeAuditLog($type, $event, $logData);
+    }
+
+    protected function sanitizeContext(array $context): array
+    {
+        foreach ($context as $key => $value) {
+            if (in_array($key, $this->sensitiveFields)) {
+                $context[$key] = '[RED

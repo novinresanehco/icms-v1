@@ -1,0 +1,34 @@
+// app/Core/Widget/Macros/WidgetMacros.php
+<?php
+
+namespace App\Core\Widget\Macros;
+
+use App\Core\Widget\Models\Widget;
+use App\Core\Widget\Services\WidgetService;
+use Illuminate\Support\Facades\Blade;
+use Illuminate\Support\Facades\View;
+use Illuminate\Support\Collection;
+
+class WidgetMacros
+{
+    public static function register(): void
+    {
+        static::registerBladeComponents();
+        static::registerBladeMacros();
+        static::registerViewMacros();
+        static::registerCollectionMacros();
+    }
+
+    protected static function registerBladeComponents(): void
+    {
+        Blade::component('widget', \App\Core\Widget\View\Components\Widget::class);
+        Blade::component('widget-area', \App\Core\Widget\View\Components\WidgetArea::class);
+    }
+
+    protected static function registerBladeMacros(): void
+    {
+        Blade::directive('widget', function ($expression) {
+            return "<?php echo app(\App\Core\Widget\Services\WidgetService::class)->render($expression); ?>";
+        });
+
+        Blade::directive('widgetArea', function ($expression) {

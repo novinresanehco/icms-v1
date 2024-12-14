@@ -1,0 +1,85 @@
+<?php
+
+namespace App\Core\Notification\Analytics\Converter;
+
+class AnalyticsConverter
+{
+    private array $converters = [];
+    private array $validators = [];
+    private array $formatters = [];
+
+    public function __construct()
+    {
+        $this->initializeConverters();
+        $this->initializeValidators();
+        $this->initializeFormatters();
+    }
+
+    public function convert($data, string $sourceFormat, string $targetFormat)
+    {
+        $key = "{$sourceFormat}_{$targetFormat}";
+        
+        if (!isset($this->converters[$key])) {
+            throw new \InvalidArgumentException("No converter found for {$sourceFormat} to {$targetFormat}");
+        }
+
+        if (!$this->validate($data, $sourceFormat)) {
+            throw new \InvalidArgumentException("Invalid {$sourceFormat} data format");
+        }
+
+        $converted = $this->converters[$key]($data);
+        
+        if (!$this->validate($converted, $targetFormat)) {
+            throw new \RuntimeException("Conversion result validation failed");
+        }
+
+        return $this->format($converted, $targetFormat);
+    }
+
+    private function validate($data, string $format): bool
+    {
+        if (!isset($this->validators[$format])) {
+            return true;
+        }
+
+        return $this->validators[$format]($data);
+    }
+
+    private function format($data, string $format): string
+    {
+        if (!isset($this->formatters[$format])) {
+            return (string)$data;
+        }
+
+        return $this->formatters[$format]($data);
+    }
+
+    private function initializeConverters(): void
+    {
+        $this->converters = [
+            'json_array' => function($data) {
+                return json_decode($data, true);
+            },
+
+            'array_json' => function($data) {
+                return json_encode($data);
+            },
+
+            'csv_array' => function($data) {
+                $lines = explode("\n", trim($data));
+                $headers = str_getcsv(array_shift($lines));
+                $result = [];
+
+                foreach ($lines as $line) {
+                    $values = str_getcsv($line);
+                    if (count($values) === count($headers)) {
+                        $result[] = array_combine($headers, $values);
+                    }
+                }
+
+                return $result;
+            },
+
+            'array_csv' => function($data) {
+                if (empty($data)) {
+                    return '';

@@ -1,0 +1,157 @@
+// app/Core/Widget/Export/WidgetExportService.php
+<?php
+
+namespace App\Core\Widget\Export;
+
+use App\Core\Widget\Models\Widget;
+use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\Storage;
+
+class WidgetExportService 
+{
+    public function exportWidgets(Collection $widgets, string $format = 'json'): string
+    {
+        $data = $widgets->map(fn(Widget $widget) => $this->prepareWidgetData($widget));
+        
+        return match($format) {
+            'json' => $this->exportToJson($data),
+            'yaml' => $this->exportToYaml($data),
+            'xml' => $this->exportToXml($data),
+            default => throw new \InvalidArgumentException("Unsupported format: {$format}")
+        };
+    }
+
+    public function exportWidget(Widget $widget, string $format = 'json'): string
+    {
+        $data = $this->prepareWidgetData($widget);
+        
+        return match($format) {
+            'json' => $this->exportToJson(collect([$data])),
+            'yaml' => $this->exportToYaml(collect([$data])),
+            'xml' => $this->exportToXml(collect([$data])),
+            default => throw new \InvalidArgumentException("Unsupported format: {$format}")
+        };
+    }
+
+    public function saveExport(string $content, string $filename): string
+    {
+        $path = 'exports/widgets/' . date('Y/m/d/') . $filename;
+        Storage::put($path, $content);
+        return $path;
+    }
+
+    protected function prepareWidgetData(Widget $widget): array
+    {
+        return [
+            'identifier' => $widget->identifier,
+            'name' => $widget->name,
+            'type' => $widget->type,
+            'area' => $widget->area,
+            'settings' => $widget->settings,
+            'order' => $widget->order,
+            'is_active' => $widget->is_active,
+            'cache_ttl' => $widget->cache_ttl,
+            'visibility_rules' => $widget->visibility_rules,
+            'permissions' => $widget->permissions,
+            'metadata' => $widget->metadata,
+            'exported_at' => now()->toIso8601String()
+        ];
+    }
+
+    protected function exportToJson(Collection $data): string
+    {
+        return json_encode($data, JSON_PRETTY_PRINT);
+    }
+
+    protected function exportToYaml(Collection $data): string
+    {
+        return yaml_emit($data->toArray());
+    }
+
+    protected function exportToXml(Collection $data): string
+    {
+        $xml = new \SimpleXMLElement('<widgets/>');
+        
+        foreach ($data as $widget) {
+            $node = $xml->addChild('widget');
+            $this->arrayToXml($widget, $node);
+        }
+        
+        return $xml->asXML();
+    }
+
+    protected function arrayToXml(array $data, \SimpleXMLElement $xml): void
+    {
+        foreach ($data as $key => $value) {
+            if (is_array($value)) {
+                $child = $xml->addChild($key);
+                $this->arrayToXml($value, $child);
+            } else {
+                $xml->addChild($key, (string) $value);
+            }
+        }
+    }
+}
+
+// app/Core/Widget/Export/WidgetImportService.php
+<?php
+
+namespace App\Core\Widget\Export;
+
+use App\Core\Widget\Models\Widget;
+use App\Core\Widget\Services\WidgetService;
+use Illuminate\Support\Collection;
+
+class WidgetImportService
+{
+    public function __construct(private WidgetService $widgetService)
+    {
+    }
+
+    public function importWidgets(string $content, string $format = 'json'): Collection
+    {
+        $data = match($format) {
+            'json' => $this->parseJson($content),
+            'yaml' => $this->parseYaml($content),
+            'xml' => $this->parseXml($content),
+            default => throw new \InvalidArgumentException("Unsupported format: {$format}")
+        };
+
+        return collect($data)->map(fn($widgetData) => $this->importWidget($widgetData));
+    }
+
+    public function importFromFile(string $path): Collection
+    {
+        $content = file_get_contents($path);
+        $format = pathinfo($path, PATHINFO_EXTENSION);
+        
+        return $this->importWidgets($content, $format);
+    }
+
+    protected function importWidget(array $data): Widget
+    {
+        $existingWidget = Widget::where('identifier', $data['identifier'])->first();
+
+        if ($existingWidget) {
+            return $this->widgetService->updateWidget($existingWidget->id, $data);
+        }
+
+        return $this->widgetService->createWidget($data);
+    }
+
+    protected function parseJson(string $content): array
+    {
+        return json_decode($content, true);
+    }
+
+    protected function parseYaml(string $content): array
+    {
+        return yaml_parse($content);
+    }
+
+    protected function parseXml(string $content): array
+    {
+        $xml = simplexml_load_string($content);
+        return json_decode(json_encode($xml), true)['widget'];
+    }
+}

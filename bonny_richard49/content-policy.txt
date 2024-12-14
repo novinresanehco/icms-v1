@@ -1,0 +1,137 @@
+<?php
+
+namespace App\Policies;
+
+use App\Models\User;
+use App\Models\Content;
+use App\Core\Security\SecurityManager;
+use App\Core\Logging\AuditLogger;
+
+class ContentPolicy
+{
+    private SecurityManager $security;
+    private AuditLogger $auditLogger;
+
+    public function __construct(
+        SecurityManager $security,
+        AuditLogger $auditLogger
+    ) {
+        $this->security = $security;
+        $this->auditLogger = $auditLogger;
+    }
+
+    public function view(User $user, Content $content): bool
+    {
+        try {
+            $this->security->validateOperation('content.view');
+            
+            if ($content->isPublished()) {
+                return true;
+            }
+
+            return $this->canAccessUnpublished($user, $content);
+
+        } catch (\Exception $e) {
+            $this->auditLogger->logPolicyFailure('content.view', [
+                'user' => $user->id,
+                'content' => $content->id,
+                'error' => $e->getMessage()
+            ]);
+            return false;
+        }
+    }
+
+    public function create(User $user): bool
+    {
+        try {
+            $this->security->validateOperation('content.create');
+            return $user->hasPermission('content.create');
+        } catch (\Exception $e) {
+            $this->auditLogger->logPolicyFailure('content.create', [
+                'user' => $user->id,
+                'error' => $e->getMessage()
+            ]);
+            return false;
+        }
+    }
+
+    public function update(User $user, Content $content): bool
+    {
+        try {
+            $this->security->validateOperation('content.update');
+            
+            if ($user->isAdmin()) {
+                return true;
+            }
+
+            return $user->id === $content->author_id && 
+                   !$content->isPublished();
+
+        } catch (\Exception $e) {
+            $this->auditLogger->logPolicyFailure('content.update', [
+                'user' => $user->id,
+                'content' => $content->id,
+                'error' => $e->getMessage()
+            ]);
+            return false;
+        }
+    }
+
+    public function delete(User $user, Content $content): bool
+    {
+        try {
+            $this->security->validateOperation('content.delete');
+            return $user->isAdmin() || $user->id === $content->author_id;
+        } catch (\Exception $e) {
+            $this->auditLogger->logPolicyFailure('content.delete', [
+                'user' => $user->id,
+                'content' => $content->id,
+                'error' => $e->getMessage()
+            ]);
+            return false;
+        }
+    }
+
+    public function publish(User $user, Content $content): bool
+    {
+        try {
+            $this->security->validateOperation('content.publish');
+            
+            if (!$content->isReadyForPublishing()) {
+                return false;
+            }
+
+            return $user->hasPermission('content.publish');
+
+        } catch (\Exception $e) {
+            $this->auditLogger->logPolicyFailure('content.publish', [
+                'user' => $user->id,
+                'content' => $content->id,
+                'error' => $e->getMessage()
+            ]);
+            return false;
+        }
+    }
+
+    public function manageVersions(User $user, Content $content): bool
+    {
+        try {
+            $this->security->validateOperation('content.versions');
+            return $user->isAdmin() || $user->id === $content->author_id;
+        } catch (\Exception $e) {
+            $this->auditLogger->logPolicyFailure('content.versions', [
+                'user' => $user->id,
+                'content' => $content->id,
+                'error' => $e->getMessage()
+            ]);
+            return false;
+        }
+    }
+
+    private function canAccessUnpublished(User $user, Content $content): bool
+    {
+        return $user->isAdmin() || 
+               $user->id === $content->author_id || 
+               $user->hasPermission('content.review');
+    }
+}

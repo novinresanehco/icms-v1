@@ -1,0 +1,128 @@
+// app/Core/Widget/Actions/CreateWidgetAction.php
+<?php
+
+namespace App\Core\Widget\Actions;
+
+use App\Core\Widget\Models\Widget;
+use App\Core\Widget\Services\WidgetService;
+use App\Core\Widget\Events\WidgetCreated;
+use Illuminate\Support\Facades\DB;
+
+class CreateWidgetAction
+{
+    public function __construct(private WidgetService $widgetService)
+    {
+    }
+
+    public function execute(array $data): Widget
+    {
+        return DB::transaction(function () use ($data) {
+            $widget = $this->widgetService->createWidget($data);
+            event(new WidgetCreated($widget));
+            return $widget;
+        });
+    }
+}
+
+// app/Core/Widget/Actions/UpdateWidgetAction.php 
+<?php
+
+namespace App\Core\Widget\Actions;
+
+use App\Core\Widget\Models\Widget;
+use App\Core\Widget\Services\WidgetService;
+use App\Core\Widget\Events\WidgetUpdated;
+use Illuminate\Support\Facades\DB;
+
+class UpdateWidgetAction
+{
+    public function __construct(private WidgetService $widgetService)
+    {
+    }
+
+    public function execute(Widget $widget, array $data): Widget
+    {
+        return DB::transaction(function () use ($widget, $data) {
+            $oldValues = $widget->toArray();
+            $widget = $this->widgetService->updateWidget($widget->id, $data);
+            event(new WidgetUpdated($widget, $oldValues, $widget->toArray()));
+            return $widget;
+        });
+    }
+}
+
+// app/Core/Widget/Actions/DeleteWidgetAction.php
+<?php
+
+namespace App\Core\Widget\Actions;
+
+use App\Core\Widget\Models\Widget;
+use App\Core\Widget\Services\WidgetService;
+use App\Core\Widget\Events\WidgetDeleted;
+use Illuminate\Support\Facades\DB;
+
+class DeleteWidgetAction
+{
+    public function __construct(private WidgetService $widgetService)
+    {
+    }
+
+    public function execute(Widget $widget): bool
+    {
+        return DB::transaction(function () use ($widget) {
+            $result = $this->widgetService->deleteWidget($widget->id);
+            event(new WidgetDeleted($widget));
+            return $result;
+        });
+    }
+}
+
+// app/Core/Widget/Actions/UpdateWidgetOrderAction.php
+<?php
+
+namespace App\Core\Widget\Actions;
+
+use App\Core\Widget\Services\WidgetService;
+use App\Core\Widget\Events\WidgetOrderUpdated;
+use Illuminate\Support\Facades\DB;
+
+class UpdateWidgetOrderAction
+{
+    public function __construct(private WidgetService $widgetService)
+    {
+    }
+
+    public function execute(array $order): void
+    {
+        DB::transaction(function () use ($order) {
+            $this->widgetService->updateWidgetOrder($order);
+            event(new WidgetOrderUpdated($order));
+        });
+    }
+}
+
+// app/Core/Widget/Actions/UpdateWidgetVisibilityAction.php
+<?php
+
+namespace App\Core\Widget\Actions;
+
+use App\Core\Widget\Models\Widget;
+use App\Core\Widget\Services\WidgetService;
+use App\Core\Widget\Events\WidgetVisibilityUpdated;
+use Illuminate\Support\Facades\DB;
+
+class UpdateWidgetVisibilityAction
+{
+    public function __construct(private WidgetService $widgetService)
+    {
+    }
+
+    public function execute(Widget $widget, array $rules): void
+    {
+        DB::transaction(function () use ($widget, $rules) {
+            $oldRules = $widget->visibility_rules;
+            $this->widgetService->updateWidgetVisibility($widget->id, $rules);
+            event(new WidgetVisibilityUpdated($widget, $oldRules, $rules));
+        });
+    }
+}

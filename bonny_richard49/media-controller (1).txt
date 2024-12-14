@@ -1,0 +1,139 @@
+<?php
+
+namespace App\Http\Controllers;
+
+use App\Core\Media\MediaManager;
+use App\Core\Security\SecurityManager;
+use App\Core\Performance\PerformanceMonitor;
+use App\Http\Requests\MediaRequest;
+use Illuminate\Http\JsonResponse;
+use Illuminate\Http\UploadedFile;
+
+class MediaController extends Controller
+{
+    private MediaManager $media;
+    private SecurityManager $security;
+    private PerformanceMonitor $monitor;
+
+    public function __construct(
+        MediaManager $media,
+        SecurityManager $security,
+        PerformanceMonitor $monitor
+    ) {
+        $this->media = $media;
+        $this->security = $security;
+        $this->monitor = $monitor;
+    }
+
+    public function store(MediaRequest $request): JsonResponse
+    {
+        $monitoringId = $this->monitor->startOperation('media.upload');
+
+        try {
+            $this->security->validateOperation('media.upload');
+            $file = $request->file('file');
+            $metadata = $request->validated()['metadata'] ?? [];
+            
+            $media = $this->media->upload($file, $metadata);
+            $metrics = $this->monitor->endOperation($monitoringId);
+
+            return response()->json([
+                'status' => 'success',
+                'data' => $media,
+                'metrics' => $metrics
+            ], 201);
+            
+        } catch (\Exception $e) {
+            $this->monitor->endOperation($monitoringId);
+            throw $e;
+        }
+    }
+
+    public function destroy(int $id): JsonResponse
+    {
+        $monitoringId = $this->monitor->startOperation('media.delete');
+
+        try {
+            $this->security->validateOperation('media.delete');
+            $media = Media::findOrFail($id);
+            $result = $this->media->delete($media);
+            $metrics = $this->monitor->endOperation($monitoringId);
+
+            return response()->json([
+                'status' => 'success',
+                'data' => ['deleted' => $result],
+                'metrics' => $metrics
+            ]);
+
+        } catch (\Exception $e) {
+            $this->monitor->endOperation($monitoringId);
+            throw $e;
+        }
+    }
+
+    public function updateMetadata(MediaRequest $request, int $id): JsonResponse
+    {
+        $monitoringId = $this->monitor->startOperation('media.update_metadata');
+
+        try {
+            $this->security->validateOperation('media.update_metadata');
+            $media = Media::findOrFail($id);
+            $media->updateMetadata($request->validated()['metadata']);
+            $metrics = $this->monitor->endOperation($monitoringId);
+
+            return response()->json([
+                'status' => 'success',
+                'data' => $media,
+                'metrics' => $metrics
+            ]);
+
+        } catch (\Exception $e) {
+            $this->monitor->endOperation($monitoringId);
+            throw $e;
+        }
+    }
+
+    public function generateThumbnails(int $id): JsonResponse
+    {
+        $monitoringId = $this->monitor->startOperation('media.generate_thumbnails');
+
+        try {
+            $this->security->validateOperation('media.generate_thumbnails');
+            $media = Media::findOrFail($id);
+            $this->media->generateThumbnails($media);
+            $metrics = $this->monitor->endOperation($monitoringId);
+
+            return response()->json([
+                'status' => 'success',
+                'data' => $media->load('thumbnails'),
+                'metrics' => $metrics
+            ]);
+
+        } catch (\Exception $e) {
+            $this->monitor->endOperation($monitoringId);
+            throw $e;
+        }
+    }
+
+    public function optimize(int $id): JsonResponse
+    {
+        $monitoringId = $this->monitor->startOperation('media.optimize');
+
+        try {
+            $this->security->validateOperation('media.optimize');
+            $media = Media::findOrFail($id);
+            $this->media->processOptimizations($media);
+            $metrics = $this->monitor->endOperation($monitoringId);
+
+            return response()->json([
+                'status' => 'success',
+                'data' => $media,
+                'metrics' => $metrics
+            ]);
+
+        } catch (\Exception $e) {
+            $this->monitor->endOperation($monitoringId);
+            throw $e;
+        }
+    }
+}

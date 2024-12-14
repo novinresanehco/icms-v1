@@ -1,0 +1,114 @@
+<?php
+
+namespace App\Core\Notification\Http\Controllers;
+
+use App\Core\Http\Controllers\Controller;
+use App\Core\Notification\Services\NotificationTemplateService;
+use App\Core\Notification\Http\Requests\{
+    CreateTemplateRequest,
+    UpdateTemplateRequest,
+    PreviewTemplateRequest
+};
+use App\Core\Notification\Http\Resources\{
+    NotificationTemplateResource,
+    NotificationTemplateCollection
+};
+use Illuminate\Http\{JsonResponse, Request};
+use Illuminate\Support\Facades\Log;
+
+class NotificationTemplateController extends Controller
+{
+    protected NotificationTemplateService $templateService;
+
+    /**
+     * Create a new controller instance.
+     *
+     * @param NotificationTemplateService $templateService
+     */
+    public function __construct(NotificationTemplateService $templateService)
+    {
+        $this->templateService = $templateService;
+    }
+
+    /**
+     * List notification templates.
+     *
+     * @param Request $request
+     * @return NotificationTemplateCollection
+     */
+    public function index(Request $request): NotificationTemplateCollection
+    {
+        try {
+            $filters = $request->validate([
+                'type' => 'nullable|string',
+                'active' => 'nullable|boolean',
+                'search' => 'nullable|string',
+                'per_page' => 'nullable|integer|min:1|max:100'
+            ]);
+
+            $templates = $this->templateService->listTemplates($filters);
+
+            return new NotificationTemplateCollection($templates);
+
+        } catch (\Exception $e) {
+            Log::error('Failed to fetch notification templates', [
+                'filters' => $filters ?? [],
+                'error' => $e->getMessage()
+            ]);
+            throw $e;
+        }
+    }
+
+    /**
+     * Create a new notification template.
+     *
+     * @param CreateTemplateRequest $request
+     * @return NotificationTemplateResource
+     */
+    public function store(CreateTemplateRequest $request): NotificationTemplateResource
+    {
+        try {
+            $template = $this->templateService->createTemplate(
+                $request->validated()
+            );
+
+            return new NotificationTemplateResource($template);
+
+        } catch (\Exception $e) {
+            Log::error('Failed to create notification template', [
+                'data' => $request->validated(),
+                'error' => $e->getMessage()
+            ]);
+            throw $e;
+        }
+    }
+
+    /**
+     * Get a single notification template.
+     *
+     * @param Request $request
+     * @param string $id
+     * @return NotificationTemplateResource
+     */
+    public function show(Request $request, string $id): NotificationTemplateResource
+    {
+        try {
+            $template = $this->templateService->getTemplate($id);
+
+            return new NotificationTemplateResource($template);
+
+        } catch (\Exception $e) {
+            Log::error('Failed to fetch notification template', [
+                'template_id' => $id,
+                'error' => $e->getMessage()
+            ]);
+            throw $e;
+        }
+    }
+
+    /**
+     * Update a notification template.
+     *
+     * @param UpdateTemplateRequest $request
+     * @param string $id
+     * @return NotificationTemplateResource

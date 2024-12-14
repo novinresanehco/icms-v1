@@ -1,0 +1,165 @@
+<?php
+
+namespace App\Core\Notification\Analytics;
+
+use App\Core\Analytics\AnalyticsEngine;
+use App\Core\Notification\Models\Notification;
+use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\DB;
+
+class NotificationAnalytics
+{
+    protected AnalyticsEngine $analytics;
+
+    public function __construct(AnalyticsEngine $analytics)
+    {
+        $this->analytics = $analytics;
+    }
+
+    /**
+     * Analyze notification performance
+     */
+    public function analyzePerformance(array $filters = []): array
+    {
+        $query = Notification::query();
+
+        if (isset($filters['start_date'])) {
+            $query->where('created_at', '>=', $filters['start_date']);
+        }
+
+        if (isset($filters['end_date'])) {
+            $query->where('created_at', '<=', $filters['end_date']);
+        }
+
+        $data = $query->select([
+            'type',
+            'status',
+            DB::raw('COUNT(*) as total'),
+            DB::raw('AVG(TIMESTAMPDIFF(SECOND, created_at, delivered_at)) as avg_delivery_time'),
+            DB::raw('AVG(TIMESTAMPDIFF(SECOND, created_at, read_at)) as avg_read_time')
+        ])
+        ->groupBy(['type', 'status'])
+        ->get();
+
+        return [
+            'summary' => $this->generateSummary($data),
+            'delivery_stats' => $this->analyzeDeliveryPerformance($data),
+            'engagement_stats' => $this->analyzeEngagement($data),
+            'trends' => $this->analyzeTrends($filters)
+        ];
+    }
+
+    /**
+     * Generate user segmentation analysis
+     */
+    public function analyzeUserSegments(array $filters = []): array
+    {
+        $data = DB::table('notifications')
+            ->join('users', 'notifications.notifiable_id', '=', 'users.id')
+            ->select([
+                'users.segment',
+                DB::raw('COUNT(*) as total_notifications'),
+                DB::raw('COUNT(CASE WHEN notifications.read_at IS NOT NULL THEN 1 END) as read_count'),
+                DB::raw('AVG(CASE WHEN notifications.read_at IS NOT NULL 
+                    THEN TIMESTAMPDIFF(SECOND, notifications.created_at, notifications.read_at) 
+                    END) as avg_time_to_read')
+            ])
+            ->groupBy('users.segment')
+            ->get();
+
+        $segments = [];
+        foreach ($data as $row) {
+            $segments[$row->segment] = [
+                'total_notifications' => $row->total_notifications,
+                'read_rate' => ($row->read_count / $row->total_notifications) * 100,
+                'avg_time_to_read' => $row->avg_time_to_read,
+                'engagement_score' => $this->calculateEngagementScore($row)
+            ];
+        }
+
+        return $segments;
+    }
+
+    /**
+     * Analyze channel effectiveness
+     */
+    public function analyzeChannelEffectiveness(array $filters = []): array
+    {
+        $data = DB::table('notifications')
+            ->select([
+                'channel',
+                DB::raw('COUNT(*) as total_sent'),
+                DB::raw('COUNT(CASE WHEN status = "delivered" THEN 1 END) as delivered_count'),
+                DB::raw('COUNT(CASE WHEN status = "failed" THEN 1 END) as failed_count'),
+                DB::raw('AVG(TIMESTAMPDIFF(SECOND, created_at, delivered_at)) as avg_delivery_time')
+            ])
+            ->groupBy('channel')
+            ->get();
+
+        $channels = [];
+        foreach ($data as $row) {
+            $channels[$row->channel] = [
+                'delivery_rate' => ($row->delivered_count / $row->total_sent) * 100,
+                'failure_rate' => ($row->failed_count / $row->total_sent) * 100,
+                'avg_delivery_time' => $row->avg_delivery_time,
+                'effectiveness_score' => $this->calculateChannelEffectiveness($row)
+            ];
+        }
+
+        return $channels;
+    }
+
+    /**
+     * Generate content performance analysis
+     */
+    public function analyzeContentPerformance(array $filters = []): array
+    {
+        $data = DB::table('notifications')
+            ->select([
+                'type',
+                'template_id',
+                DB::raw('COUNT(*) as total_sent'),
+                DB::raw('COUNT(CASE WHEN read_at IS NOT NULL THEN 1 END) as read_count'),
+                DB::raw('COUNT(CASE WHEN clicked_at IS NOT NULL THEN 1 END) as click_count')
+            ])
+            ->groupBy(['type', 'template_id'])
+            ->get();
+
+        $templates = [];
+        foreach ($data as $row) {
+            $templates[$row->template_id] = [
+                'type' => $row->type,
+                'read_rate' => ($row->read_count / $row->total_sent) * 100,
+                'click_rate' => ($row->click_count / $row->total_sent) * 100,
+                'engagement_rate' => $this->calculateEngagementRate($row),
+                'performance_score' => $this->calculateContentPerformance($row)
+            ];
+        }
+
+        return $templates;
+    }
+
+    /**
+     * Generate A/B testing analysis
+     */
+    public function analyzeABTests(string $testId): array
+    {
+        $data = DB::table('notification_ab_tests')
+            ->where('test_id', $testId)
+            ->select([
+                'variant',
+                DB::raw('COUNT(*) as total_sent'),
+                DB::raw('COUNT(CASE WHEN read_at IS NOT NULL THEN 1 END) as read_count'),
+                DB::raw('COUNT(CASE WHEN clicked_at IS NOT NULL THEN 1 END) as click_count')
+            ])
+            ->groupBy('variant')
+            ->get();
+
+        $results = [];
+        foreach ($data as $variant) {
+            $results[$variant->variant] = [
+                'conversion_rate' => ($variant->click_count / $variant->total_sent) * 100,
+                'read_rate' => ($variant->read_count / $variant->total_sent) * 100,
+                'statistical_significance' => $this->calculateSignificance($variant, $data)
+            ];
+        }

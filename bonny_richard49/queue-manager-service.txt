@@ -1,0 +1,99 @@
+<?php
+
+namespace App\Core\System;
+
+use App\Core\Interfaces\QueueManagerInterface;
+use Illuminate\Support\Facades\Redis;
+use Psr\Log\LoggerInterface;
+
+class QueueManager implements QueueManagerInterface 
+{
+    private LoggerInterface $logger;
+    private array $config;
+    private array $metrics;
+
+    private const RETRY_ATTEMPTS = 3;
+    private const RETRY_DELAY = 60;
+    private const BATCH_SIZE = 100;
+
+    public function __construct(LoggerInterface $logger)
+    {
+        $this->logger = $logger;
+        $this->config = config('queue');
+        $this->metrics = [];
+    }
+
+    public function push(string $queue, array $payload, int $priority = 0): string
+    {
+        try {
+            $jobId = $this->generateJobId();
+            
+            $this->storeJob($jobId, $queue, $payload, $priority);
+            $this->pushToQueue($queue, $jobId, $priority);
+            
+            $this->recordMetric('push', $queue);
+            
+            return $jobId;
+        } catch (\Exception $e) {
+            $this->handleQueueError('push', $e, $queue);
+            throw $e;
+        }
+    }
+
+    public function pushBulk(string $queue, array $payloads, int $priority = 0): array
+    {
+        try {
+            DB::beginTransaction();
+
+            $jobIds = [];
+            foreach (array_chunk($payloads, self::BATCH_SIZE) as $chunk) {
+                foreach ($chunk as $payload) {
+                    $jobId = $this->generateJobId();
+                    $this->storeJob($jobId, $queue, $payload, $priority);
+                    $jobIds[] = $jobId;
+                }
+                
+                $this->pushBulkToQueue($queue, $jobIds, $priority);
+            }
+
+            $this->recordMetric('push_bulk', $queue, count($payloads));
+
+            DB::commit();
+            return $jobIds;
+        } catch (\Exception $e) {
+            DB::rollBack();
+            $this->handleQueueError('push_bulk', $e, $queue);
+            throw $e;
+        }
+    }
+
+    public function later(string $queue, array $payload, int $delay): string
+    {
+        try {
+            $jobId = $this->generateJobId();
+            
+            $this->storeJob($jobId, $queue, $payload);
+            $this->scheduleJob($queue, $jobId, $delay);
+            
+            $this->recordMetric('schedule', $queue);
+            
+            return $jobId;
+        } catch (\Exception $e) {
+            $this->handleQueueError('later', $e, $queue);
+            throw $e;
+        }
+    }
+
+    public function retry(string $jobId): bool
+    {
+        try {
+            $job = $this->getJob($jobId);
+            
+            if (!$job || $job['attempts'] >= self::RETRY_ATTEMPTS) {
+                return false;
+            }
+
+            $this->updateJobAttempts($jobId);
+            $this->pushToQueue($job['queue'], $jobId, $job['priority']);
+            
+            $this->recordMetric('retry', $job['

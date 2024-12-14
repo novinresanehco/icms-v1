@@ -1,0 +1,38 @@
+<?php
+
+namespace App\Core\Cache;
+
+use Illuminate\Support\Facades\Cache;
+use App\Core\Security\SecurityManager;
+
+class CacheManager
+{
+    private SecurityManager $security;
+    private array $config;
+    
+    public function __construct(SecurityManager $security, array $config)
+    {
+        $this->security = $security;
+        $this->config = $config;
+    }
+
+    public function remember(string $key, callable $callback, array $context = []): mixed
+    {
+        return $this->security->executeCriticalOperation(function() use ($key, $callback) {
+            // Check cache with validation
+            if ($cached = $this->getValidated($key)) {
+                return $cached;
+            }
+            
+            // Generate and cache value
+            $value = $callback();
+            
+            // Store with validation
+            $this->storeValidated($key, $value);
+            
+            return $value;
+        }, $context);
+    }
+
+    public function invalidateGroup(string $group): void
+    {

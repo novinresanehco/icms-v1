@@ -1,0 +1,235 @@
+<?php
+
+namespace App\Core\Notification\Analytics\Channels;
+
+use App\Core\Notification\Analytics\Contracts\{
+    AlertChannelInterface,
+    AlertChannelConfigurationInterface,
+    AlertChannelFormatterInterface,
+    AlertChannelRateLimiterInterface,
+    AlertChannelRetryInterface
+};
+use App\Core\Notification\Analytics\Mail\AlertMail;
+use Illuminate\Support\Facades\{Mail, Cache, Log};
+use Exception;
+
+class EmailAlertChannel implements 
+    AlertChannelInterface,
+    AlertChannelConfigurationInterface,
+    AlertChannelFormatterInterface,
+    AlertChannelRateLimiterInterface,
+    AlertChannelRetryInterface
+{
+    private array $config;
+    private const CACHE_PREFIX = 'email_alert_channel:';
+    private const MAX_ATTEMPTS = 3;
+    private const RATE_LIMIT_KEY = 'email_rate_limit';
+    private const RATE_LIMIT_MINUTES = 5;
+    private const RATE_LIMIT_ATTEMPTS = 50;
+
+    public function __construct(array $config = [])
+    {
+        $this->config = array_merge($this->getDefaultConfig(), $config);
+    }
+
+    public function validateData(array $data): bool
+    {
+        return isset($data['subject'], $data['content']) && 
+               !empty($data['subject']) && 
+               !empty($data['content']);
+    }
+
+    public function getRequiredConfig(): array
+    {
+        return [
+            'from_address',
+            'from_name'
+        ];
+    }
+
+    public function getOptionalConfig(): array
+    {
+        return [
+            'reply_to',
+            'template',
+            'signature',
+            'logo_url',
+            'footer_text'
+        ];
+    }
+
+    public function validateConfig(array $config): bool
+    {
+        foreach ($this->getRequiredConfig() as $field) {
+            if (!isset($config[$field]) || empty($config[$field])) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    public function getDefaultConfig(): array
+    {
+        return [
+            'from_name' => 'Alert System',
+            'template' => 'emails.alert',
+            'footer_text' => 'This is an automated alert. Please do not reply to this email.'
+        ];
+    }
+
+    public function formatMessage(string $message, array $data = [], array $options = []): array
+    {
+        $severity = $options['severity'] ?? 'info';
+        
+        return [
+            'subject' => $this->formatSubject($message, $severity, $options),
+            'content' => $message,
+            'data' => $this->formatData($data),
+            'severity' => $severity,
+            'metadata' => [
+                'metric_name' => $options['metric_name'] ?? null,
+                'timestamp' => now()->toIso8601String(),
+                'alert_id' => $options['alert_id'] ?? uniqid('alert_'),
+                'severity_level' => $this->getSeverityLevel($severity)
+            ],
+            'template' => $options['template'] ?? $this->config['template'],
+            'signature' => $options['signature'] ?? $this->config['signature'] ?? null,
+            'logo_url' => $options['logo_url'] ?? $this->config['logo_url'] ?? null,
+            'footer_text' => $options['footer_text'] ?? $this->config['footer_text']
+        ];
+    }
+
+    public function formatError(\Throwable $error, array $context = []): string
+    {
+        return sprintf(
+            "Error sending email alert\n\nError: %s\n\nStack Trace:\n%s\n\nContext:\n%s",
+            $error->getMessage(),
+            $error->getTraceAsString(),
+            json_encode($context, JSON_PRETTY_PRINT)
+        );
+    }
+
+    public function isRateLimited(string $key): bool
+    {
+        $attempts = Cache::get($this->getRateLimitKey($key), 0);
+        return $attempts >= self::RATE_LIMIT_ATTEMPTS;
+    }
+
+    public function hit(string $key): void
+    {
+        $cacheKey = $this->getRateLimitKey($key);
+        $attempts = Cache::get($cacheKey, 0) + 1;
+        
+        Cache::put(
+            $cacheKey,
+            $attempts,
+            now()->addMinutes(self::RATE_LIMIT_MINUTES)
+        );
+    }
+
+    public function remaining(string $key): int
+    {
+        $attempts = Cache::get($this->getRateLimitKey($key), 0);
+        return max(0, self::RATE_LIMIT_ATTEMPTS - $attempts);
+    }
+
+    public function reset(string $key): void
+    {
+        Cache::forget($this->getRateLimitKey($key));
+    }
+
+    public function shouldRetry(\Throwable $error, int $attempts): bool
+    {
+        if ($attempts >= $this->getMaxAttempts()) {
+            return false;
+        }
+
+        // Retry on network errors or SMTP temporary failures
+        return $error instanceof \Swift_TransportException ||
+               strpos($error->getMessage(), '4.') === 0;
+    }
+
+    public function getRetryDelay(int $attempts): int
+    {
+        // Exponential backoff with jitter: 2^n + random(0-1) seconds
+        return pow(2, $attempts) + rand(0, 100) / 100;
+    }
+
+    public function getMaxAttempts(): int
+    {
+        return self::MAX_ATTEMPTS;
+    }
+
+    private function getRateLimitKey(string $key): string
+    {
+        return self::CACHE_PREFIX . $key;
+    }
+
+    private function formatSubject(string $message, string $severity, array $options): string
+    {
+        $prefix = $this->getSeverityPrefix($severity);
+        $metricName = $options['metric_name'] ?? 'System Alert';
+        
+        return sprintf(
+            '%s %s: %s',
+            $prefix,
+            $metricName,
+            $this->truncateSubject($message)
+        );
+    }
+
+    private function getSeverityPrefix(string $severity): string
+    {
+        return match($severity) {
+            'critical' => '🚨 CRITICAL',
+            'warning' => '⚠️ Warning',
+            'info' => 'ℹ️ Info',
+            default => '🔔 Alert'
+        };
+    }
+
+    private function getSeverityLevel(string $severity): int
+    {
+        return match($severity) {
+            'critical' => 3,
+            'warning' => 2,
+            'info' => 1,
+            default => 0
+        };
+    }
+
+    private function truncateSubject(string $subject, int $length = 100): string
+    {
+        if (strlen($subject) <= $length) {
+            return $subject;
+        }
+
+        return substr($subject, 0, $length - 3) . '...';
+    }
+
+    private function formatData(array $data): array
+    {
+        $formatted = [];
+        
+        foreach ($data as $key => $value) {
+            $formatted[ucwords(str_replace('_', ' ', $key))] = 
+                is_array($value) ? json_encode($value, JSON_PRETTY_PRINT) : $value;
+        }
+
+        return $formatted;
+    }
+
+    private function getRecipients(array $options): array
+    {
+        $recipients = $options['recipients'] ?? $this->config['default_recipients'] ?? [];
+
+        if (empty($recipients)) {
+            throw new Exception('No recipients specified for email alert');
+        }
+
+        // Filter and validate email addresses
+        return array_filter($recipients, function($email) {
+            return filter_var($email, FILTER_VALIDATE_EMAIL);
+        });
+    }
+}

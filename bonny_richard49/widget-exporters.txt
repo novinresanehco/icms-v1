@@ -1,0 +1,166 @@
+// app/Core/Widget/Exporters/WidgetExporter.php
+<?php
+
+namespace App\Core\Widget\Exporters;
+
+use App\Core\Widget\Models\Widget;
+use Illuminate\Support\Collection;
+
+class WidgetExporter
+{
+    public function export(Collection $widgets, string $format = 'json'): string
+    {
+        return match($format) {
+            'json' => $this->toJson($widgets),
+            'csv' => $this->toCsv($widgets),
+            'xml' => $this->toXml($widgets),
+            default => throw new \InvalidArgumentException("Invalid export format: {$format}")
+        };
+    }
+
+    private function toJson(Collection $widgets): string
+    {
+        return json_encode($widgets->map(fn($widget) => $this->prepareData($widget)));
+    }
+
+    private function toCsv(Collection $widgets): string
+    {
+        $handle = fopen('php://temp', 'r+');
+        
+        // Write headers
+        fputcsv($handle, array_keys($this->prepareData($widgets->first())));
+        
+        // Write data
+        foreach ($widgets as $widget) {
+            fputcsv($handle, array_values($this->prepareData($widget)));
+        }
+        
+        rewind($handle);
+        $csv = stream_get_contents($handle);
+        fclose($handle);
+        
+        return $csv;
+    }
+
+    private function toXml(Collection $widgets): string
+    {
+        $xml = new \SimpleXMLElement('<?xml version="1.0" encoding="UTF-8"?><widgets></widgets>');
+        
+        foreach ($widgets as $widget) {
+            $node = $xml->addChild('widget');
+            $this->arrayToXml($this->prepareData($widget), $node);
+        }
+        
+        return $xml->asXML();
+    }
+
+    private function prepareData(Widget $widget): array
+    {
+        return [
+            'id' => $widget->id,
+            'name' => $widget->name,
+            'identifier' => $widget->identifier,
+            'type' => $widget->type,
+            'area' => $widget->area,
+            'settings' => json_encode($widget->settings),
+            'is_active' => $widget->is_active ? 'true' : 'false',
+            'created_at' => $widget->created_at->toIso8601String()
+        ];
+    }
+
+    private function arrayToXml(array $data, \SimpleXMLElement $xml): void
+    {
+        foreach ($data as $key => $value) {
+            if (is_array($value)) {
+                $child = $xml->addChild($key);
+                $this->arrayToXml($value, $child);
+            } else {
+                $xml->addChild($key, htmlspecialchars((string) $value));
+            }
+        }
+    }
+}
+
+// app/Core/Widget/Exporters/WidgetMetricsExporter.php
+<?php
+
+namespace App\Core\Widget\Exporters;
+
+use App\Core\Widget\Models\Widget;
+use Carbon\Carbon;
+
+class WidgetMetricsExporter
+{
+    public function export(Widget $widget, Carbon $start, Carbon $end, string $format = 'json'): string
+    {
+        $metrics = $this->collectMetrics($widget, $start, $end);
+        
+        return match($format) {
+            'json' => $this->toJson($metrics),
+            'csv' => $this->toCsv($metrics),
+            'xml' => $this->toXml($metrics),
+            default => throw new \InvalidArgumentException("Invalid export format: {$format}")
+        };
+    }
+
+    private function collectMetrics(Widget $widget, Carbon $start, Carbon $end): array
+    {
+        return $widget->metrics()
+            ->whereBetween('recorded_at', [$start, $end])
+            ->get()
+            ->groupBy('metric_key')
+            ->map(fn($metrics) => [
+                'average' => $metrics->avg('metric_value'),
+                'min' => $metrics->min('metric_value'),
+                'max' => $metrics->max('metric_value'),
+                'count' => $metrics->count()
+            ])
+            ->toArray();
+    }
+
+    private function toJson(array $metrics): string
+    {
+        return json_encode($metrics);
+    }
+
+    private function toCsv(array $metrics): string
+    {
+        $handle = fopen('php://temp', 'r+');
+        
+        // Headers
+        fputcsv($handle, ['Metric', 'Average', 'Min', 'Max', 'Count']);
+        
+        // Data
+        foreach ($metrics as $key => $values) {
+            fputcsv($handle, [
+                $key,
+                $values['average'],
+                $values['min'],
+                $values['max'],
+                $values['count']
+            ]);
+        }
+        
+        rewind($handle);
+        $csv = stream_get_contents($handle);
+        fclose($handle);
+        
+        return $csv;
+    }
+
+    private function toXml(array $metrics): string
+    {
+        $xml = new \SimpleXMLElement('<?xml version="1.0" encoding="UTF-8"?><metrics></metrics>');
+        
+        foreach ($metrics as $key => $values) {
+            $metric = $xml->addChild('metric');
+            $metric->addAttribute('name', $key);
+            $metric->addChild('average', $values['average']);
+            $metric->addChild('min', $values['min']);
+            $metric->addChild('max', $values['max']);
+            $metric->addChild('count', $values['count']);
+        }
+        
+        return $xml->asXML();
+    }
+}

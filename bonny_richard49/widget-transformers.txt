@@ -1,0 +1,126 @@
+// app/Core/Widget/Transformers/WidgetTransformer.php
+<?php
+
+namespace App\Core\Widget\Transformers;
+
+use App\Core\Widget\Models\Widget;
+use Illuminate\Support\Carbon;
+
+class WidgetTransformer
+{
+    public function transform(Widget $widget): array
+    {
+        return [
+            'id' => $widget->id,
+            'name' => $widget->name,
+            'identifier' => $widget->identifier,
+            'type' => $widget->type,
+            'area' => $widget->area,
+            'settings' => $this->transformSettings($widget->settings),
+            'order' => $widget->order,
+            'is_active' => $widget->is_active,
+            'cache_ttl' => $widget->cache_ttl,
+            'visibility_rules' => $widget->visibility_rules,
+            'permissions' => $widget->permissions,
+            'metadata' => $widget->metadata,
+            'created_at' => $this->formatDate($widget->created_at),
+            'updated_at' => $this->formatDate($widget->updated_at)
+        ];
+    }
+
+    protected function transformSettings(?array $settings): array
+    {
+        if (!$settings) {
+            return [];
+        }
+
+        return array_map(function ($value) {
+            if ($value instanceof Carbon) {
+                return $this->formatDate($value);
+            }
+            return $value;
+        }, $settings);
+    }
+
+    protected function formatDate(?Carbon $date): ?string
+    {
+        return $date ? $date->toIso8601String() : null;
+    }
+}
+
+// app/Core/Widget/Transformers/WidgetMetricsTransformer.php
+<?php
+
+namespace App\Core\Widget\Transformers;
+
+use App\Core\Widget\Models\Widget;
+use Carbon\Carbon;
+
+class WidgetMetricsTransformer
+{
+    public function transform(Widget $widget, array $metrics): array
+    {
+        return [
+            'widget' => [
+                'id' => $widget->id,
+                'name' => $widget->name
+            ],
+            'metrics' => [
+                'views' => $this->transformViewMetrics($metrics['views'] ?? []),
+                'performance' => $this->transformPerformanceMetrics($metrics['performance'] ?? []),
+                'interactions' => $this->transformInteractionMetrics($metrics['interactions'] ?? [])
+            ],
+            'period' => [
+                'start' => $this->formatDate($metrics['start_date'] ?? null),
+                'end' => $this->formatDate($metrics['end_date'] ?? null)
+            ],
+            'generated_at' => Carbon::now()->toIso8601String()
+        ];
+    }
+
+    protected function transformViewMetrics(array $metrics): array
+    {
+        return [
+            'total_views' => $metrics['total_views'] ?? 0,
+            'unique_views' => $metrics['unique_views'] ?? 0,
+            'view_trend' => $this->calculateTrend($metrics['view_history'] ?? [])
+        ];
+    }
+
+    protected function transformPerformanceMetrics(array $metrics): array
+    {
+        return [
+            'load_time' => [
+                'average' => round($metrics['avg_load_time'] ?? 0, 2),
+                'max' => round($metrics['max_load_time'] ?? 0, 2)
+            ],
+            'memory_usage' => [
+                'average' => round($metrics['avg_memory_usage'] ?? 0, 2),
+                'peak' => round($metrics['peak_memory_usage'] ?? 0, 2)
+            ],
+            'cache' => [
+                'hit_rate' => $this->calculateCacheHitRate(
+                    $metrics['cache_hits'] ?? 0,
+                    $metrics['cache_misses'] ?? 0
+                )
+            ]
+        ];
+    }
+
+    protected function transformInteractionMetrics(array $metrics): array
+    {
+        return array_map(function ($value) {
+            return [
+                'count' => $value['count'] ?? 0,
+                'rate' => $this->calculateRate($value['count'] ?? 0, $value['total'] ?? 0)
+            ];
+        }, $metrics);
+    }
+
+    protected function calculateTrend(array $history): array
+    {
+        if (empty($history)) {
+            return ['direction' => 'stable', 'percentage' => 0];
+        }
+
+        

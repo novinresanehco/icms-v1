@@ -1,0 +1,226 @@
+<?php
+
+namespace App\Core\Notification\Analytics\Channels;
+
+use App\Core\Notification\Analytics\Contracts\{
+    AlertChannelInterface,
+    AlertChannelConfigurationInterface,
+    AlertChannelFormatterInterface,
+    AlertChannelRateLimiterInterface,
+    AlertChannelRetryInterface
+};
+use Illuminate\Support\Facades\{Http, Cache, Log};
+use Exception;
+
+class SmsAlertChannel implements 
+    AlertChannelInterface,
+    AlertChannelConfigurationInterface,
+    AlertChannelFormatterInterface,
+    AlertChannelRateLimiterInterface,
+    AlertChannelRetryInterface
+{
+    private array $config;
+    private const CACHE_PREFIX = 'sms_alert_channel:';
+    private const MAX_ATTEMPTS = 3;
+    private const RATE_LIMIT_KEY = 'sms_rate_limit';
+    private const RATE_LIMIT_MINUTES = 5;
+    private const RATE_LIMIT_ATTEMPTS = 20;
+    private const MAX_MESSAGE_LENGTH = 160;
+
+    public function __construct(array $config = [])
+    {
+        $this->config = array_merge($this->getDefaultConfig(), $config);
+    }
+
+    public function send(string $message, array $data = [], array $options = []): array
+    {
+        if ($this->isRateLimited(self::RATE_LIMIT_KEY)) {
+            throw new Exception('Rate limit exceeded for SMS channel');
+        }
+
+        $recipients = $this->getRecipients($options);
+        if (empty($recipients)) {
+            throw new Exception('No recipients specified for SMS alert');
+        }
+
+        $formattedMessage = $this->formatMessage($message, $data, $options);
+        $attempts = 0;
+        $results = [];
+
+        foreach ($recipients as $recipient) {
+            $attempts = 0;
+            do {
+                try {
+                    $response = $this->sendSms($recipient, $formattedMessage);
+                    $results[$recipient] = $response;
+                    $this->hit(self::RATE_LIMIT_KEY);
+                    break;
+                } catch (Exception $e) {
+                    $attempts++;
+                    
+                    if (!$this->shouldRetry($e, $attempts)) {
+                        $results[$recipient] = [
+                            'success' => false,
+                            'error' => $e->getMessage()
+                        ];
+                        break;
+                    }
+
+                    sleep($this->getRetryDelay($attempts));
+                }
+            } while ($attempts < $this->getMaxAttempts());
+        }
+
+        $successCount = count(array_filter($results, fn($r) => $r['success'] ?? false));
+        $failureCount = count($results) - $successCount;
+
+        if ($failureCount === count($results)) {
+            throw new Exception("Failed to send SMS alerts to all recipients");
+        }
+
+        return [
+            'success' => $successCount > 0,
+            'results' => $results,
+            'stats' => [
+                'total' => count($results),
+                'success' => $successCount,
+                'failure' => $failureCount
+            ]
+        ];
+    }
+
+    public function isAvailable(): bool
+    {
+        try {
+            $response = Http::get($this->config['api_url'] . '/status');
+            return $response->successful() && 
+                   ($response->json('status') === 'available');
+        } catch (Exception $e) {
+            Log::error('SMS channel unavailable', ['error' => $e->getMessage()]);
+            return false;
+        }
+    }
+
+    public function getConfig(): array
+    {
+        return $this->config;
+    }
+
+    public function validateData(array $data): bool
+    {
+        return isset($data['message']) && !empty($data['message']);
+    }
+
+    public function getRequiredConfig(): array
+    {
+        return [
+            'api_url',
+            'api_key',
+            'sender_id'
+        ];
+    }
+
+    public function getOptionalConfig(): array
+    {
+        return [
+            'default_recipients',
+            'message_prefix',
+            'message_suffix',
+            'unicode_support'
+        ];
+    }
+
+    public function validateConfig(array $config): bool
+    {
+        foreach ($this->getRequiredConfig() as $field) {
+            if (!isset($config[$field]) || empty($config[$field])) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    public function getDefaultConfig(): array
+    {
+        return [
+            'unicode_support' => false,
+            'message_prefix' => '[ALERT] ',
+            'message_suffix' => ''
+        ];
+    }
+
+    public function formatMessage(string $message, array $data = [], array $options = []): string
+    {
+        $severity = $options['severity'] ?? 'info';
+        $prefix = $this->config['message_prefix'];
+        $suffix = $this->config['message_suffix'];
+
+        $formattedMessage = $prefix . $this->getSeverityPrefix($severity) . ' ' . $message;
+        
+        if ($options['metric_name'] ?? null) {
+            $formattedMessage .= " ({$options['metric_name']})";
+        }
+
+        if (!empty($data)) {
+            $formattedMessage .= "\n" . $this->formatData($data);
+        }
+
+        $formattedMessage .= $suffix;
+
+        return $this->truncateMessage($formattedMessage);
+    }
+
+    public function formatError(\Throwable $error, array $context = []): string
+    {
+        return sprintf(
+            "SMS Alert Error: %s (Context: %s)",
+            $error->getMessage(),
+            json_encode($context)
+        );
+    }
+
+    public function isRateLimited(string $key): bool
+    {
+        $attempts = Cache::get($this->getRateLimitKey($key), 0);
+        return $attempts >= self::RATE_LIMIT_ATTEMPTS;
+    }
+
+    public function hit(string $key): void
+    {
+        $cacheKey = $this->getRateLimitKey($key);
+        $attempts = Cache::get($cacheKey, 0) + 1;
+        
+        Cache::put(
+            $cacheKey,
+            $attempts,
+            now()->addMinutes(self::RATE_LIMIT_MINUTES)
+        );
+    }
+
+    public function remaining(string $key): int
+    {
+        $attempts = Cache::get($this->getRateLimitKey($key), 0);
+        return max(0, self::RATE_LIMIT_ATTEMPTS - $attempts);
+    }
+
+    public function reset(string $key): void
+    {
+        Cache::forget($this->getRateLimitKey($key));
+    }
+
+    public function shouldRetry(\Throwable $error, int $attempts): bool
+    {
+        if ($attempts >= $this->getMaxAttempts()) {
+            return false;
+        }
+
+        // Retry on network errors or specific API errors
+        return $error instanceof \Illuminate\Http\Client\ConnectionException ||
+               (method_exists($error, 'response') && 
+                $error->response && 
+                in_array($error->response->status(), [408, 500, 502, 503, 504]));
+    }
+
+    public function getRetryDelay(int $attempts): int
+    {
+        // Exponential backoff with jitter: 2^n + random

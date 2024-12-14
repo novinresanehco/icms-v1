@@ -1,0 +1,108 @@
+<?php
+
+namespace App\Core\Analysis;
+
+class CodeAnalyzer implements CodeAnalyzerInterface
+{
+    private Parser $parser;
+    private RuleEngine $rules;
+    private MetricsCollector $metrics;
+    private ValidationService $validator;
+
+    public function analyzeCode(string $code, array $options = []): AnalysisResult
+    {
+        $operationId = uniqid('analysis_', true);
+
+        try {
+            $ast = $this->parser->parse($code);
+            $this->validateAst($ast);
+            
+            $structureAnalysis = $this->analyzeStructure($ast, $options);
+            $qualityAnalysis = $this->analyzeCodeQuality($ast, $options);
+            $securityAnalysis = $this->analyzeSecurityIssues($ast, $options);
+            
+            $metrics = $this->collectMetrics($ast);
+            
+            return $this->compileResults(
+                $structureAnalysis,
+                $qualityAnalysis,
+                $securityAnalysis,
+                $metrics,
+                $operationId
+            );
+
+        } catch (\Throwable $e) {
+            $this->handleAnalysisFailure($e, $operationId);
+            throw $e;
+        }
+    }
+
+    protected function validateAst($ast): void
+    {
+        if (!$this->validator->validateAst($ast)) {
+            throw new CodeAnalysisException('Invalid AST structure');
+        }
+    }
+
+    protected function analyzeStructure($ast, array $options): StructureAnalysisResult
+    {
+        $violations = [];
+
+        // Check class structure
+        $classViolations = $this->rules->checkClassStructure($ast);
+        $violations = array_merge($violations, $classViolations);
+
+        // Check method structure
+        $methodViolations = $this->rules->checkMethodStructure($ast);
+        $violations = array_merge($violations, $methodViolations);
+
+        // Analyze dependencies
+        $dependencyViolations = $this->rules->checkDependencies($ast);
+        $violations = array_merge($violations, $dependencyViolations);
+
+        return new StructureAnalysisResult($violations);
+    }
+
+    protected function analyzeCodeQuality($ast, array $options): QualityAnalysisResult
+    {
+        $issues = [];
+
+        // Check code complexity
+        $complexityIssues = $this->rules->checkComplexity($ast);
+        $issues = array_merge($issues, $complexityIssues);
+
+        // Check code duplication
+        $duplicationIssues = $this->rules->checkDuplication($ast);
+        $issues = array_merge($issues, $duplicationIssues);
+
+        // Check naming conventions
+        $namingIssues = $this->rules->checkNaming($ast);
+        $issues = array_merge($issues, $namingIssues);
+
+        return new QualityAnalysisResult($issues);
+    }
+
+    protected function analyzeSecurityIssues($ast, array $options): SecurityAnalysisResult
+    {
+        $vulnerabilities = [];
+
+        // Check input validation
+        $inputVulnerabilities = $this->rules->checkInputValidation($ast);
+        $vulnerabilities = array_merge($vulnerabilities, $inputVulnerabilities);
+
+        // Check SQL injection risks
+        $sqlVulnerabilities = $this->rules->checkSqlInjection($ast);
+        $vulnerabilities = array_merge($vulnerabilities, $sqlVulnerabilities);
+
+        // Check XSS vulnerabilities
+        $xssVulnerabilities = $this->rules->checkXssVulnerabilities($ast);
+        $vulnerabilities = array_merge($vulnerabilities, $xssVulnerabilities);
+
+        return new SecurityAnalysisResult($vulnerabilities);
+    }
+
+    protected function collectMetrics($ast): array
+    {
+        return [
+            'complexity' => $this->metrics->calculateComplexity($ast),
+            'loc' => $this->metrics->

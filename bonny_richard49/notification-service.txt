@@ -1,0 +1,192 @@
+<?php
+
+namespace App\Core\System;
+
+use App\Core\Interfaces\{
+    NotificationInterface,
+    QueueManagerInterface
+};
+use App\Core\Security\SecurityContext;
+use Illuminate\Support\Facades\DB;
+use Psr\Log\LoggerInterface;
+
+class NotificationService implements NotificationInterface
+{
+    private QueueManagerInterface $queue;
+    private LoggerInterface $logger;
+    private array $config;
+
+    private const PRIORITY_LEVELS = [
+        'emergency' => 0,
+        'critical' => 1,
+        'high' => 2,
+        'normal' => 3,
+        'low' => 4
+    ];
+
+    private const MAX_RETRIES = 3;
+    private const RETRY_DELAY = 300; // 5 minutes
+
+    public function __construct(
+        QueueManagerInterface $queue,
+        LoggerInterface $logger
+    ) {
+        $this->queue = $queue;
+        $this->logger = $logger;
+        $this->config = config('notifications');
+    }
+
+    public function send(string $recipient, string $message, string $priority = 'normal'): void
+    {
+        try {
+            $notificationId = $this->createNotificationRecord($recipient, $message, $priority);
+            
+            $this->queue->push('notifications', [
+                'id' => $notificationId,
+                'recipient' => $recipient,
+                'message' => $message,
+                'priority' => $priority
+            ], $this->getQueuePriority($priority));
+
+            $this->logNotification($notificationId, $recipient, $priority);
+        } catch (\Exception $e) {
+            $this->handleNotificationError($e, $recipient, $message);
+        }
+    }
+
+    public function sendBulk(array $recipients, string $message, string $priority = 'normal'): void
+    {
+        try {
+            DB::beginTransaction();
+
+            $notificationIds = [];
+            foreach ($recipients as $recipient) {
+                $notificationIds[] = $this->createNotificationRecord($recipient, $message, $priority);
+            }
+
+            $this->queue->pushBulk('notifications', array_map(
+                fn($id, $recipient) => [
+                    'id' => $id,
+                    'recipient' => $recipient,
+                    'message' => $message,
+                    'priority' => $priority
+                ],
+                $notificationIds,
+                $recipients
+            ), $this->getQueuePriority($priority));
+
+            $this->logBulkNotification($notificationIds, count($recipients), $priority);
+
+            DB::commit();
+        } catch (\Exception $e) {
+            DB::rollBack();
+            $this->handleBulkNotificationError($e, $recipients, $message);
+        }
+    }
+
+    public function sendSecurityAlert(string $recipient, array $alertData): void
+    {
+        try {
+            $alertId = $this->createSecurityAlertRecord($recipient, $alertData);
+            
+            $this->queue->push('security_alerts', [
+                'id' => $alertId,
+                'recipient' => $recipient,
+                'data' => $alertData
+            ], self::PRIORITY_LEVELS['emergency']);
+
+            $this->logSecurityAlert($alertId, $recipient, $alertData);
+        } catch (\Exception $e) {
+            $this->handleSecurityAlertError($e, $recipient, $alertData);
+        }
+    }
+
+    public function markDelivered(int $notificationId): void
+    {
+        try {
+            DB::table('notifications')
+                ->where('id', $notificationId)
+                ->update([
+                    'status' => 'delivered',
+                    'delivered_at' => time()
+                ]);
+        } catch (\Exception $e) {
+            $this->logger->error('Failed to mark notification as delivered', [
+                'notification_id' => $notificationId,
+                'error' => $e->getMessage()
+            ]);
+        }
+    }
+
+    protected function createNotificationRecord(string $recipient, string $message, string $priority): int
+    {
+        return DB::table('notifications')->insertGetId([
+            'recipient' => $recipient,
+            'message' => $message,
+            'priority' => self::PRIORITY_LEVELS[$priority] ?? self::PRIORITY_LEVELS['normal'],
+            'status' => 'pending',
+            'created_at' => time()
+        ]);
+    }
+
+    protected function createSecurityAlertRecord(string $recipient, array $alertData): int
+    {
+        return DB::table('security_alert_notifications')->insertGetId([
+            'recipient' => $recipient,
+            'alert_data' => json_encode($alertData),
+            'priority' => self::PRIORITY_LEVELS['emergency'],
+            'status' => 'pending',
+            'created_at' => time()
+        ]);
+    }
+
+    protected function getQueuePriority(string $priority): int
+    {
+        return self::PRIORITY_LEVELS[$priority] ?? self::PRIORITY_LEVELS['normal'];
+    }
+
+    protected function logNotification(int $id, string $recipient, string $priority): void
+    {
+        $this->logger->info('Notification queued', [
+            'notification_id' => $id,
+            'recipient' => $recipient,
+            'priority' => $priority
+        ]);
+    }
+
+    protected function logBulkNotification(array $ids, int $count, string $priority): void
+    {
+        $this->logger->info('Bulk notifications queued', [
+            'notification_ids' => $ids,
+            'recipient_count' => $count,
+            'priority' => $priority
+        ]);
+    }
+
+    protected function logSecurityAlert(int $id, string $recipient, array $alertData): void
+    {
+        $this->logger->alert('Security alert notification queued', [
+            'alert_id' => $id,
+            'recipient' => $recipient,
+            'alert_type' => $alertData['type'] ?? 'unknown'
+        ]);
+    }
+
+    protected function handleNotificationError(\Exception $e, string $recipient, string $message): void
+    {
+        $this->logger->error('Failed to send notification', [
+            'recipient' => $recipient,
+            'error' => $e->getMessage(),
+            'trace' => $e->getTraceAsString()
+        ]);
+
+        if ($this->shouldRetry($e)) {
+            $this->scheduleRetry($recipient, $message);
+        }
+    }
+
+    protected function handleBulkNotificationError(\Exception $e, array $recipients, string $message): void
+    {
+        $this->logger->error('Failed to send bulk notifications', [
+            'recipient_count' => count($recipients),
+            'error' => $e->

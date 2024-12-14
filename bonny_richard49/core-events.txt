@@ -1,0 +1,72 @@
+<?php
+
+namespace App\Core\Events;
+
+use App\Core\Contracts\EventInterface;
+use App\Core\Security\SecurityManager;
+use App\Core\Logging\AuditLogger;
+
+class EventDispatcher implements EventInterface
+{
+    protected SecurityManager $security;
+    protected AuditLogger $auditLogger;
+    protected array $listeners = [];
+
+    public function __construct(
+        SecurityManager $security,
+        AuditLogger $auditLogger
+    ) {
+        $this->security = $security;
+        $this->auditLogger = $auditLogger;
+    }
+
+    public function dispatch(string $event, $payload = null): void
+    {
+        $this->validateEvent($event);
+        $this->logEvent($event, $payload);
+
+        foreach ($this->getListeners($event) as $listener) {
+            try {
+                $listener($payload);
+            } catch (\Exception $e) {
+                $this->handleListenerFailure($event, $listener, $e);
+            }
+        }
+    }
+
+    public function listen(string $event, callable $listener): void
+    {
+        $this->validateListener($event, $listener);
+        $this->listeners[$event][] = $listener;
+    }
+
+    public function forget(string $event): void
+    {
+        unset($this->listeners[$event]);
+    }
+
+    protected function validateEvent(string $event): void
+    {
+        $this->security->validateEvent($event);
+    }
+
+    protected function validateListener(string $event, callable $listener): void
+    {
+        $this->security->validateEventListener($event, $listener);
+    }
+
+    protected function getListeners(string $event): array
+    {
+        return $this->listeners[$event] ?? [];
+    }
+
+    protected function logEvent(string $event, $payload): void
+    {
+        $this->auditLogger->logEvent($event, $payload);
+    }
+
+    protected function handleListenerFailure(string $event, callable $listener, \Exception $e): void
+    {
+        $this->auditLogger->logListenerFailure($event, $listener, $e);
+    }
+}

@@ -1,0 +1,154 @@
+// app/Core/Widget/Handlers/Api/CreateWidgetHandler.php
+<?php
+
+namespace App\Core\Widget\Handlers\Api;
+
+use App\Core\Widget\Models\Widget;
+use App\Core\Widget\Services\WidgetService;
+use App\Core\Widget\Events\WidgetCreated;
+use Illuminate\Support\Facades\DB;
+
+class CreateWidgetHandler
+{
+    public function __construct(private WidgetService $widgetService)
+    {
+    }
+
+    public function handle(array $data): Widget
+    {
+        return DB::transaction(function () use ($data) {
+            $widget = $this->widgetService->createWidget($data);
+            event(new WidgetCreated($widget));
+            return $widget;
+        });
+    }
+}
+
+// app/Core/Widget/Handlers/Api/UpdateWidgetHandler.php
+<?php
+
+namespace App\Core\Widget\Handlers\Api;
+
+use App\Core\Widget\Models\Widget;
+use App\Core\Widget\Services\WidgetService;
+use App\Core\Widget\Events\WidgetUpdated;
+use Illuminate\Support\Facades\DB;
+
+class UpdateWidgetHandler
+{
+    public function __construct(private WidgetService $widgetService)
+    {
+    }
+
+    public function handle(Widget $widget, array $data): Widget
+    {
+        return DB::transaction(function () use ($widget, $data) {
+            $oldValues = $widget->toArray();
+            $widget = $this->widgetService->updateWidget($widget->id, $data);
+            event(new WidgetUpdated($widget, $oldValues, $widget->toArray()));
+            return $widget;
+        });
+    }
+}
+
+// app/Core/Widget/Handlers/Api/DeleteWidgetHandler.php
+<?php
+
+namespace App\Core\Widget\Handlers\Api;
+
+use App\Core\Widget\Models\Widget;
+use App\Core\Widget\Services\WidgetService;
+use App\Core\Widget\Events\WidgetDeleted;
+use Illuminate\Support\Facades\DB;
+
+class DeleteWidgetHandler
+{
+    public function __construct(private WidgetService $widgetService)
+    {
+    }
+
+    public function handle(Widget $widget): bool
+    {
+        return DB::transaction(function () use ($widget) {
+            $result = $this->widgetService->deleteWidget($widget->id);
+            event(new WidgetDeleted($widget));
+            return $result;
+        });
+    }
+}
+
+// app/Core/Widget/Handlers/Api/UpdateWidgetOrderHandler.php
+<?php
+
+namespace App\Core\Widget\Handlers\Api;
+
+use App\Core\Widget\Services\WidgetService;
+use App\Core\Widget\Events\WidgetOrderUpdated;
+use Illuminate\Support\Facades\DB;
+
+class UpdateWidgetOrderHandler
+{
+    public function __construct(private WidgetService $widgetService)
+    {
+    }
+
+    public function handle(array $order): void
+    {
+        DB::transaction(function () use ($order) {
+            $this->widgetService->updateWidgetOrder($order);
+            event(new WidgetOrderUpdated($order));
+        });
+    }
+}
+
+// app/Core/Widget/Handlers/Api/UpdateWidgetVisibilityHandler.php
+<?php
+
+namespace App\Core\Widget\Handlers\Api;
+
+use App\Core\Widget\Models\Widget;
+use App\Core\Widget\Services\WidgetService;
+use App\Core\Widget\Events\WidgetVisibilityUpdated;
+use Illuminate\Support\Facades\DB;
+
+class UpdateWidgetVisibilityHandler
+{
+    public function __construct(private WidgetService $widgetService)
+    {
+    }
+
+    public function handle(Widget $widget, array $rules): void
+    {
+        DB::transaction(function () use ($widget, $rules) {
+            $oldRules = $widget->visibility_rules;
+            $this->widgetService->updateWidgetVisibility($widget->id, $rules);
+            event(new WidgetVisibilityUpdated($widget, $oldRules, $rules));
+        });
+    }
+}
+
+// app/Core/Widget/Handlers/Api/UpdateWidgetSettingsHandler.php
+<?php
+
+namespace App\Core\Widget\Handlers\Api;
+
+use App\Core\Widget\Models\Widget;
+use App\Core\Widget\Services\WidgetService;
+use App\Core\Widget\Events\WidgetSettingsUpdated;
+use Illuminate\Support\Facades\DB;
+
+class UpdateWidgetSettingsHandler
+{
+    public function __construct(private WidgetService $widgetService)
+    {
+    }
+
+    public function handle(Widget $widget, array $settings): void
+    {
+        DB::transaction(function () use ($widget, $settings) {
+            $oldSettings = $widget->settings;
+            $this->widgetService->updateWidgetSettings($widget->id, $settings);
+            event(new WidgetSettingsUpdated($widget, $oldSettings, $settings));
+        });
+    }
+}

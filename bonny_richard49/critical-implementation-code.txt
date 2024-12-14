@@ -1,0 +1,149 @@
+<?php
+namespace App\Core;
+
+final class CriticalOperationManager
+{
+    private SecurityManager $security;
+    private ValidationService $validator;
+    private AuditLogger $logger;
+    private MetricsCollector $metrics;
+
+    public function executeOperation(
+        CriticalOperation $operation,
+        SecurityContext $context
+    ): OperationResult {
+        DB::beginTransaction();
+        
+        try {
+            // Pre-execution validation
+            $this->validateOperation($operation, $context);
+            
+            // Execute with protection
+            $result = $this->executeWithProtection($operation, $context);
+            
+            // Verify result integrity
+            $this->verifyResult($result);
+            
+            DB::commit();
+            $this->logSuccess($operation, $context, $result);
+            
+            return $result;
+            
+        } catch (\Exception $e) {
+            DB::rollBack();
+            $this->handleFailure($operation, $context, $e);
+            throw new CriticalOperationException(
+                'Operation failed: ' . $e->getMessage(),
+                0,
+                $e
+            );
+        }
+    }
+
+    private function validateOperation(
+        CriticalOperation $operation,
+        SecurityContext $context
+    ): void {
+        // Security validation
+        $this->security->validateContext($context);
+        
+        // Input validation
+        $this->validator->validateInput(
+            $operation->getData(),
+            $operation->getValidationRules()
+        );
+        
+        // Permission check
+        if (!$this->security->hasPermission($context, $operation->getRequiredPermissions())) {
+            $this->logger->logUnauthorizedAccess($context, $operation);
+            throw new UnauthorizedException('Insufficient permissions');
+        }
+
+        // Additional security checks
+        $this->performSecurityChecks($operation, $context);
+    }
+
+    private function executeWithProtection(
+        CriticalOperation $operation,
+        SecurityContext $context
+    ): OperationResult {
+        $monitor = new OperationMonitor($operation, $context);
+        
+        try {
+            // Execute with monitoring
+            $result = $monitor->execute(function() use ($operation) {
+                return $operation->execute();
+            });
+
+            // Validate result
+            if (!$result->isValid()) {
+                throw new OperationException('Invalid operation result');
+            }
+
+            return $result;
+            
+        } catch (\Exception $e) {
+            $monitor->recordFailure($e);
+            throw $e;
+        }
+    }
+
+    private function verifyResult(OperationResult $result): void {
+        // Data integrity
+        if (!$this->validator->verifyIntegrity($result)) {
+            throw new IntegrityException('Result integrity check failed');
+        }
+
+        // Business rules
+        if (!$this->validator->verifyBusinessRules($result)) {
+            throw new BusinessRuleException('Business rule validation failed');
+        }
+
+        // Performance checks
+        $this->verifyPerformance($result);
+    }
+
+    private function verifyPerformance(OperationResult $result): void {
+        $metrics = $this->metrics->collectMetrics();
+
+        if ($metrics->exceedsThresholds()) {
+            throw new PerformanceException('Performance thresholds exceeded');
+        }
+    }
+
+    private function handleFailure(
+        CriticalOperation $operation,
+        SecurityContext $context,
+        \Exception $e
+    ): void {
+        // Log comprehensive failure details
+        $this->logger->logFailure([
+            'operation' => get_class($operation),
+            'context' => $context->toArray(),
+            'error' => $e->getMessage(),
+            'trace' => $e->getTraceAsString(),
+            'state' => $this->captureSystemState()
+        ]);
+
+        // Execute recovery procedures
+        $this->executeRecoveryProcedures($operation, $e);
+
+        // Alert monitoring systems
+        $this->alertMonitoringSystems($operation, $e);
+    }
+
+    private function executeRecoveryProcedures(
+        CriticalOperation $operation,
+        \Exception $e
+    ): void {
+        try {
+            $recovery = new RecoveryProcedure($operation);
+            $recovery->execute();
+        } catch (\Exception $recoveryError) {
+            $this->logger->critical('Recovery procedure failed', [
+                'original_error' => $e->getMessage(),
+                'recovery_error' => $recoveryError->getMessage()
+            ]);
+        }
+    }
+}

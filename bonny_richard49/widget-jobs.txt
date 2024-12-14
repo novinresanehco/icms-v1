@@ -1,0 +1,145 @@
+// app/Core/Widget/Jobs/ProcessWidgetMetrics.php
+<?php
+
+namespace App\Core\Widget\Jobs;
+
+use App\Core\Widget\Models\Widget;
+use App\Core\Widget\Services\WidgetMetricsService;
+use Illuminate\Bus\Queueable;
+use Illuminate\Contracts\Queue\ShouldQueue;
+use Illuminate\Foundation\Bus\Dispatchable;
+use Illuminate\Queue\InteractsWithQueue;
+use Illuminate\Queue\SerializesModels;
+
+class ProcessWidgetMetrics implements ShouldQueue
+{
+    use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
+
+    public function __construct(
+        protected Widget $widget,
+        protected array $metrics
+    ) {}
+
+    public function handle(WidgetMetricsService $metricsService): void
+    {
+        $metricsService->processMetrics($this->widget, $this->metrics);
+    }
+}
+
+// app/Core/Widget/Jobs/GenerateWidgetReport.php
+<?php
+
+namespace App\Core\Widget\Jobs;
+
+use App\Core\Widget\Models\Widget;
+use App\Core\Widget\Services\WidgetReportService;
+use Carbon\Carbon;
+use Illuminate\Bus\Queueable;
+use Illuminate\Contracts\Queue\ShouldQueue;
+use Illuminate\Foundation\Bus\Dispatchable;
+use Illuminate\Queue\InteractsWithQueue;
+use Illuminate\Queue\SerializesModels;
+
+class GenerateWidgetReport implements ShouldQueue
+{
+    use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
+
+    public function __construct(
+        protected Widget $widget,
+        protected string $reportType,
+        protected Carbon $startDate,
+        protected Carbon $endDate
+    ) {}
+
+    public function handle(WidgetReportService $reportService): void
+    {
+        $reportService->generateReport(
+            $this->widget,
+            $this->reportType,
+            $this->startDate,
+            $this->endDate
+        );
+    }
+}
+
+// app/Core/Widget/Jobs/OptimizeWidgetCache.php
+<?php
+
+namespace App\Core\Widget\Jobs;
+
+use App\Core\Widget\Models\Widget;
+use App\Core\Widget\Services\WidgetCacheService;
+use Illuminate\Bus\Queueable;
+use Illuminate\Contracts\Queue\ShouldQueue;
+use Illuminate\Foundation\Bus\Dispatchable;
+use Illuminate\Queue\InteractsWithQueue;
+use Illuminate\Queue\SerializesModels;
+
+class OptimizeWidgetCache implements ShouldQueue
+{
+    use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
+
+    public function __construct(protected Widget $widget)
+    {}
+
+    public function handle(WidgetCacheService $cacheService): void
+    {
+        $cacheService->optimizeCache($this->widget);
+    }
+}
+
+// app/Core/Widget/Jobs/CleanupWidgetData.php
+<?php
+
+namespace App\Core\Widget\Jobs;
+
+use App\Core\Widget\Models\Widget;
+use App\Core\Widget\Services\WidgetCleanupService;
+use Illuminate\Bus\Queueable;
+use Illuminate\Contracts\Queue\ShouldQueue;
+use Illuminate\Foundation\Bus\Dispatchable;
+use Illuminate\Queue\InteractsWithQueue;
+use Illuminate\Queue\SerializesModels;
+
+class CleanupWidgetData implements ShouldQueue
+{
+    use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
+
+    public function __construct(
+        protected Widget $widget,
+        protected array $options = []
+    ) {}
+
+    public function handle(WidgetCleanupService $cleanupService): void
+    {
+        $cleanupService->cleanup($this->widget, $this->options);
+    }
+}
+
+// app/Core/Widget/Jobs/ProcessWidgetBackup.php
+<?php
+
+namespace App\Core\Widget\Jobs;
+
+use App\Core\Widget\Models\Widget;
+use App\Core\Widget\Services\WidgetBackupService;
+use Illuminate\Bus\Queueable;
+use Illuminate\Contracts\Queue\ShouldQueue;
+use Illuminate\Foundation\Bus\Dispatchable;
+use Illuminate\Queue\InteractsWithQueue;
+use Illuminate\Queue\SerializesModels;
+
+class ProcessWidgetBackup implements ShouldQueue
+{
+    use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
+
+    public function __construct(
+        protected Widget $widget,
+        protected string $backupType = 'full'
+    ) {}
+
+    public function handle(WidgetBackupService $backupService): void
+    {
+        $backupService->createBackup($this->widget, $this->backupType);
+    }
+}

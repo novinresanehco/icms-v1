@@ -1,0 +1,156 @@
+// app/Core/Widget/Http/Kernel.php
+<?php
+
+namespace App\Core\Widget\Http;
+
+use Illuminate\Foundation\Http\Kernel as HttpKernel;
+
+class Kernel extends HttpKernel
+{
+    protected $middleware = [
+        \App\Core\Widget\Http\Middleware\WidgetCacheMiddleware::class,
+        \App\Core\Widget\Http\Middleware\WidgetAuthorizationMiddleware::class,
+        \App\Core\Widget\Http\Middleware\WidgetMetricsMiddleware::class,
+    ];
+
+    protected $middlewareGroups = [
+        'widget' => [
+            \App\Core\Widget\Http\Middleware\WidgetCacheMiddleware::class,
+            \App\Core\Widget\Http\Middleware\WidgetAuthorizationMiddleware::class,
+            \App\Core\Widget\Http\Middleware\WidgetMetricsMiddleware::class,
+        ],
+    ];
+
+    protected $routeMiddleware = [
+        'widget.cache' => \App\Core\Widget\Http\Middleware\WidgetCacheMiddleware::class,
+        'widget.auth' => \App\Core\Widget\Http\Middleware\WidgetAuthorizationMiddleware::class,
+        'widget.metrics' => \App\Core\Widget\Http\Middleware\WidgetMetricsMiddleware::class,
+        'widget.validate' => \App\Core\Widget\Http\Middleware\WidgetValidationMiddleware::class,
+    ];
+}
+
+// app/Core/Widget/Http/Middleware/WidgetCacheMiddleware.php
+<?php
+
+namespace App\Core\Widget\Http\Middleware;
+
+use Closure;
+use Illuminate\Http\Request;
+
+class WidgetCacheMiddleware
+{
+    public function handle(Request $request, Closure $next)
+    {
+        $widget = $request->route('widget');
+        
+        if ($widget && $widget->shouldCache()) {
+            $cacheKey = "widget:{$widget->id}:rendered";
+            
+            if (cache()->has($cacheKey)) {
+                return cache()->get($cacheKey);
+            }
+            
+            $response = $next($request);
+            
+            cache()->put($cacheKey, $response, $widget->cache_ttl);
+            
+            return $response;
+        }
+        
+        return $next($request);
+    }
+}
+
+// app/Core/Widget/Http/Middleware/WidgetAuthorizationMiddleware.php
+<?php
+
+namespace App\Core\Widget\Http\Middleware;
+
+use Closure;
+use Illuminate\Http\Request;
+use App\Core\Widget\Exceptions\WidgetUnauthorizedException;
+use App\Core\Widget\Services\WidgetAuthorizationService;
+
+class WidgetAuthorizationMiddleware
+{
+    public function __construct(
+        private WidgetAuthorizationService $authService
+    ) {}
+
+    public function handle(Request $request, Closure $next)
+    {
+        $widget = $request->route('widget');
+        
+        if ($widget && !$this->authService->canAccess($request->user(), $widget)) {
+            throw new WidgetUnauthorizedException();
+        }
+        
+        return $next($request);
+    }
+}
+
+// app/Core/Widget/Http/Middleware/WidgetMetricsMiddleware.php
+<?php
+
+namespace App\Core\Widget\Http\Middleware;
+
+use Closure;
+use Illuminate\Http\Request;
+use App\Core\Widget\Services\WidgetMetricsService;
+
+class WidgetMetricsMiddleware
+{
+    public function __construct(
+        private WidgetMetricsService $metricsService
+    ) {}
+
+    public function handle(Request $request, Closure $next)
+    {
+        $startTime = microtime(true);
+        
+        $response = $next($request);
+        
+        if ($widget = $request->route('widget')) {
+            $this->metricsService->recordMetrics($widget, [
+                'response_time' => microtime(true) - $startTime,
+                'memory_usage' => memory_get_peak_usage(true),
+                'url' => $request->fullUrl(),
+                'method' => $request->method(),
+            ]);
+        }
+        
+        return $response;
+    }
+}
+
+// app/Core/Widget/Http/Middleware/WidgetValidationMiddleware.php
+<?php
+
+namespace App\Core\Widget\Http\Middleware;
+
+use Closure;
+use Illuminate\Http\Request;
+use App\Core\Widget\Services\WidgetValidationService;
+use App\Core\Widget\Exceptions\WidgetValidationException;
+
+class WidgetValidationMiddleware
+{
+    public function __construct(
+        private WidgetValidationService $validationService
+    ) {}
+
+    public function handle(Request $request, Closure $next)
+    {
+        $widget = $request->route('widget');
+        
+        if ($widget) {
+            $errors = $this->validationService->validate($widget);
+            
+            if (!empty($errors)) {
+                throw new WidgetValidationException($errors);
+            }
+        }
+        
+        return $next($request);
+    }
+}

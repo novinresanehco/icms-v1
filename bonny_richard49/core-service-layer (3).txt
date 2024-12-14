@@ -1,0 +1,67 @@
+<?php
+
+namespace App\Core\Services;
+
+use App\Core\Contracts\ServiceInterface;
+use App\Core\Repositories\BaseRepository;
+use Illuminate\Support\Facades\DB;
+use App\Core\Security\SecurityManager;
+use App\Core\Validation\ValidationService;
+use App\Core\Logging\AuditLogger;
+use App\Core\Events\EventDispatcher;
+
+abstract class BaseService implements ServiceInterface
+{
+    protected BaseRepository $repository;
+    protected SecurityManager $security;
+    protected ValidationService $validator;
+    protected AuditLogger $auditLogger;
+    protected EventDispatcher $events;
+
+    public function __construct(
+        BaseRepository $repository,
+        SecurityManager $security,
+        ValidationService $validator,
+        AuditLogger $auditLogger,
+        EventDispatcher $events
+    ) {
+        $this->repository = $repository;
+        $this->security = $security;
+        $this->validator = $validator;
+        $this->auditLogger = $auditLogger;
+        $this->events = $events;
+    }
+
+    protected function executeOperation(string $operation, callable $action): mixed
+    {
+        DB::beginTransaction();
+
+        try {
+            $this->security->validateOperation($operation);
+            $result = $action();
+            $this->validateResult($result);
+            DB::commit();
+            $this->auditLogger->logSuccess($operation, $result);
+            $this->events->dispatch("operation.{$operation}.completed", $result);
+            return $result;
+
+        } catch (\Exception $e) {
+            DB::rollBack();
+            $this->handleOperationFailure($operation, $e);
+            throw $e;
+        }
+    }
+
+    protected function validateResult($result): void
+    {
+        if (!$this->validator->validateResult($result)) {
+            throw new ValidationException('Operation result validation failed');
+        }
+    }
+
+    protected function handleOperationFailure(string $operation, \Exception $e): void
+    {
+        $this->auditLogger->logFailure($operation, $e);
+        $this->events->dispatch("operation.{$operation}.failed", $e);
+    }
+}

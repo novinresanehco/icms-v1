@@ -1,0 +1,88 @@
+<?php
+
+namespace App\Core\Repositories;
+
+use App\Core\Contracts\RepositoryInterface;
+use Illuminate\Database\Eloquent\Model;
+use App\Core\Security\SecurityManager;
+use App\Core\Cache\CacheManager;
+use App\Core\Validation\ValidationService;
+
+abstract class BaseRepository implements RepositoryInterface
+{
+    protected Model $model;
+    protected SecurityManager $security;
+    protected CacheManager $cache;
+    protected ValidationService $validator;
+
+    public function __construct(
+        Model $model,
+        SecurityManager $security,
+        CacheManager $cache,
+        ValidationService $validator
+    ) {
+        $this->model = $model;
+        $this->security = $security;
+        $this->cache = $cache;
+        $this->validator = $validator;
+    }
+
+    public function find($id)
+    {
+        $cacheKey = $this->getCacheKey('find', $id);
+
+        return $this->cache->remember($cacheKey, function() use ($id) {
+            return $this->model->findOrFail($id);
+        });
+    }
+
+    public function create(array $data)
+    {
+        $this->validateData($data);
+        $this->security->validateCreate($data);
+
+        $model = $this->model->create($data);
+        $this->clearModelCache();
+        
+        return $model;
+    }
+
+    public function update($id, array $data)
+    {
+        $this->validateData($data);
+        $this->security->validateUpdate($id, $data);
+
+        $model = $this->find($id);
+        $model->update($data);
+        $this->clearModelCache();
+        
+        return $model;
+    }
+
+    public function delete($id): bool
+    {
+        $this->security->validateDelete($id);
+        
+        $model = $this->find($id);
+        $result = $model->delete();
+        $this->clearModelCache();
+        
+        return $result;
+    }
+
+    protected function validateData(array $data): void
+    {
+        if (!$this->validator->validate($data, $this->rules())) {
+            throw new ValidationException('Repository data validation failed');
+        }
+    }
+
+    protected function clearModelCache(): void
+    {
+        $this->cache->tags($this->getCacheTags())->flush();
+    }
+
+    abstract protected function rules(): array;
+    abstract protected function getCacheKey(string $operation, ...$params): string;
+    abstract protected function getCacheTags(): array;
+}

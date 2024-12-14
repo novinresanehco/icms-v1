@@ -1,0 +1,78 @@
+<?php
+
+namespace App\Core\Notification\Analytics\Services;
+
+use App\Core\Notification\Analytics\Notifications\MetricAnomalyNotification;
+use App\Core\Notification\Analytics\Models\AlertConfiguration;
+use Illuminate\Support\Facades\{Notification, Log};
+use Carbon\Carbon;
+
+class AlertingService
+{
+    private array $alertChannels;
+    private array $alertThrottles = [];
+    private const THROTTLE_MINUTES = 30;
+
+    public function __construct()
+    {
+        $this->alertChannels = config('notification.analytics.alert_channels', [
+            'slack' => true,
+            'email' => true,
+            'database' => true
+        ]);
+    }
+
+    public function sendAlert(
+        string $metricName,
+        float $currentValue,
+        float $threshold,
+        string $severity,
+        array $context = []
+    ): void {
+        if ($this->shouldThrottleAlert($metricName, $severity)) {
+            Log::info('Alert throttled', [
+                'metric' => $metricName,
+                'severity' => $severity,
+                'timestamp' => Carbon::now()
+            ]);
+            return;
+        }
+
+        $alert = new MetricAnomalyNotification(
+            $metricName,
+            $currentValue,
+            $threshold,
+            $severity,
+            $context
+        );
+
+        $this->dispatchAlert($alert);
+        $this->recordAlertSent($metricName, $severity);
+    }
+
+    private function dispatchAlert(MetricAnomalyNotification $alert): void
+    {
+        try {
+            $recipients = $this->getAlertRecipients($alert->severity);
+
+            foreach ($recipients as $recipient) {
+                Notification::send($recipient, $alert);
+            }
+
+            $this->logAlert($alert);
+
+        } catch (\Exception $e) {
+            Log::error('Failed to send alert notification', [
+                'metric' => $alert->metricName,
+                'severity' => $alert->severity,
+                'error' => $e->getMessage()
+            ]);
+        }
+    }
+
+    private function getAlertRecipients(string $severity): array
+    {
+        // Get recipients based on severity and alert configuration
+        $alertConfig = AlertConfiguration::where('severity', $severity)
+            ->where('is_active', true)
+            ->first();

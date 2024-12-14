@@ -1,0 +1,203 @@
+// app/Core/Widget/Concerns/HasSettings.php
+<?php
+
+namespace App\Core\Widget\Concerns;
+
+use Illuminate\Support\Arr;
+
+trait HasSettings
+{
+    public function getSetting(string $key, $default = null)
+    {
+        return Arr::get($this->settings, $key, $default);
+    }
+
+    public function setSetting(string $key, $value): void
+    {
+        $settings = $this->settings;
+        Arr::set($settings, $key, $value);
+        $this->settings = $settings;
+    }
+
+    public function hasSetting(string $key): bool
+    {
+        return Arr::has($this->settings, $key);
+    }
+
+    public function removeSetting(string $key): void
+    {
+        $settings = $this->settings;
+        Arr::forget($settings, $key);
+        $this->settings = $settings;
+    }
+
+    public function mergeSettings(array $settings): void
+    {
+        $this->settings = array_merge($this->settings ?? [], $settings);
+    }
+}
+
+// app/Core/Widget/Concerns/HasCache.php
+<?php
+
+namespace App\Core\Widget\Concerns;
+
+use Illuminate\Support\Facades\Cache;
+
+trait HasCache
+{
+    public function getCacheKey(): string
+    {
+        return "widget:{$this->id}:rendered";
+    }
+
+    public function getCacheTags(): array
+    {
+        return [
+            'widgets',
+            "widget:{$this->id}",
+            "area:{$this->area}",
+            "type:{$this->type}"
+        ];
+    }
+
+    public function clearCache(): void
+    {
+        Cache::tags($this->getCacheTags())->flush();
+    }
+
+    public function shouldCache(): bool
+    {
+        return !is_null($this->cache_ttl) && $this->cache_ttl > 0;
+    }
+
+    public function getCacheDuration(): ?int
+    {
+        return $this->cache_ttl;
+    }
+}
+
+// app/Core/Widget/Concerns/HasMetrics.php
+<?php
+
+namespace App\Core\Widget\Concerns;
+
+trait HasMetrics
+{
+    public function recordMetric(string $key, $value): void
+    {
+        $this->metrics()->create([
+            'metric_key' => $key,
+            'metric_value' => $value,
+            'recorded_at' => now()
+        ]);
+    }
+
+    public function getMetricValue(string $key)
+    {
+        return $this->metrics()
+            ->where('metric_key', $key)
+            ->latest('recorded_at')
+            ->value('metric_value');
+    }
+
+    public function getMetricHistory(string $key, int $limit = 10): array
+    {
+        return $this->metrics()
+            ->where('metric_key', $key)
+            ->latest('recorded_at')
+            ->limit($limit)
+            ->pluck('metric_value')
+            ->toArray();
+    }
+
+    public function clearMetrics(): void
+    {
+        $this->metrics()->delete();
+    }
+}
+
+// app/Core/Widget/Concerns/HasVisibility.php
+<?php
+
+namespace App\Core\Widget\Concerns;
+
+trait HasVisibility
+{
+    public function isVisibleTo($user): bool
+    {
+        if (!$this->is_active) {
+            return false;
+        }
+
+        if (empty($this->visibility_rules)) {
+            return true;
+        }
+
+        $rules = $this->visibility_rules;
+        $results = [];
+
+        foreach ($rules['conditions'] as $condition) {
+            $results[] = $this->evaluateCondition($condition, $user);
+        }
+
+        return $rules['operator'] === 'and'
+            ? !in_array(false, $results, true)
+            : in_array(true, $results, true);
+    }
+
+    protected function evaluateCondition(array $condition, $user): bool
+    {
+        if (!$user) {
+            return false;
+        }
+
+        return match($condition['type']) {
+            'role' => $user->hasRole($condition['value']),
+            'permission' => $user->can($condition['value']),
+            'custom' => $this->evaluateCustomCondition($condition, $user),
+            default => false
+        };
+    }
+
+    protected function evaluateCustomCondition(array $condition, $user): bool
+    {
+        // Implement custom condition logic
+        return false;
+    }
+}
+
+// app/Core/Widget/Concerns/HasPermissions.php
+<?php
+
+namespace App\Core\Widget\Concerns;
+
+trait HasPermissions
+{
+    public function hasPermission(string $permission): bool
+    {
+        return in_array($permission, $this->permissions ?? []);
+    }
+
+    public function addPermission(string $permission): void
+    {
+        if (!$this->hasPermission($permission)) {
+            $this->permissions = array_merge($this->permissions ?? [], [$permission]);
+        }
+    }
+
+    public function removePermission(string $permission): void
+    {
+        $this->permissions = array_diff($this->permissions ?? [], [$permission]);
+    }
+
+    public function syncPermissions(array $permissions): void
+    {
+        $this->permissions = $permissions;
+    }
+
+    public function clearPermissions(): void
+    {
+        $this->permissions = [];
+    }
+}

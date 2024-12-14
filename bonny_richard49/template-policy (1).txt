@@ -1,0 +1,108 @@
+<?php
+
+namespace App\Policies;
+
+use App\Models\User;
+use App\Models\Template;
+use App\Core\Security\SecurityManager;
+use App\Core\Logging\AuditLogger;
+
+class TemplatePolicy
+{
+    private SecurityManager $security;
+    private AuditLogger $auditLogger;
+
+    public function __construct(
+        SecurityManager $security,
+        AuditLogger $auditLogger
+    ) {
+        $this->security = $security;
+        $this->auditLogger = $auditLogger;
+    }
+
+    public function render(User $user, Template $template): bool
+    {
+        try {
+            $this->security->validateOperation('template.render');
+            return $user->hasPermission('template.render');
+        } catch (\Exception $e) {
+            $this->auditLogger->logPolicyFailure('template.render', [
+                'user' => $user->id,
+                'template' => $template->id,
+                'error' => $e->getMessage()
+            ]);
+            return false;
+        }
+    }
+
+    public function compile(User $user): bool
+    {
+        try {
+            $this->security->validateOperation('template.compile');
+            return $user->hasPermission('template.compile');
+        } catch (\Exception $e) {
+            $this->auditLogger->logPolicyFailure('template.compile', [
+                'user' => $user->id,
+                'error' => $e->getMessage()
+            ]);
+            return false;
+        }
+    }
+
+    public function validate(User $user): bool
+    {
+        try {
+            $this->security->validateOperation('template.validate');
+            return $user->hasPermission('template.validate');
+        } catch (\Exception $e) {
+            $this->auditLogger->logPolicyFailure('template.validate', [
+                'user' => $user->id,
+                'error' => $e->getMessage()
+            ]);
+            return false;
+        }
+    }
+
+    public function clearCache(User $user): bool
+    {
+        try {
+            $this->security->validateOperation('template.cache_clear');
+            return $user->hasPermission('template.cache_clear');
+        } catch (\Exception $e) {
+            $this->auditLogger->logPolicyFailure('template.cache_clear', [
+                'user' => $user->id,
+                'error' => $e->getMessage()
+            ]);
+            return false;
+        }
+    }
+
+    public function extend(User $user): bool
+    {
+        try {
+            $this->security->validateOperation('template.extend');
+            return $user->hasPermission('template.extend') && 
+                   app()->environment('local', 'testing');
+        } catch (\Exception $e) {
+            $this->auditLogger->logPolicyFailure('template.extend', [
+                'user' => $user->id,
+                'error' => $e->getMessage()
+            ]);
+            return false;
+        }
+    }
+
+    public function addGlobal(User $user): bool
+    {
+        try {
+            $this->security->validateOperation('template.global');
+            return $user->hasPermission('template.global');
+        } catch (\Exception $e) {
+            $this->auditLogger->logPolicyFailure('template.global', [
+                'user' => $user->id,
+                'error' => $e->getMessage()
+            ]);
+            return false;
+        }
+    }
+}

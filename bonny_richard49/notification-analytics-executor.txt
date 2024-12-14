@@ -1,0 +1,220 @@
+<?php
+
+namespace App\Core\Notification\Analytics\Executor;
+
+class AnalyticsExecutor 
+{
+    private array $tasks = [];
+    private array $executors = [];
+    private array $results = [];
+    private array $metrics = [];
+    
+    public function registerTask(string $name, callable $task, array $config = []): void
+    {
+        $this->tasks[$name] = [
+            'task' => $task,
+            'config' => array_merge([
+                'retry_count' => 3,
+                'timeout' => 30,
+                'priority' => 1
+            ], $config)
+        ];
+    }
+
+    public function registerExecutor(string $name, TaskExecutor $executor): void
+    {
+        $this->executors[$name] = $executor;
+    }
+
+    public function execute(string $task, array $params = [], string $executor = 'default'): mixed
+    {
+        if (!isset($this->tasks[$task])) {
+            throw new \InvalidArgumentException("Unknown task: {$task}");
+        }
+
+        if (!isset($this->executors[$executor])) {
+            throw new \InvalidArgumentException("Unknown executor: {$executor}");
+        }
+
+        $config = $this->tasks[$task]['config'];
+        $startTime = microtime(true);
+
+        try {
+            $result = $this->executeWithRetry(
+                $this->tasks[$task]['task'],
+                $params,
+                $this->executors[$executor],
+                $config
+            );
+
+            $this->recordMetrics($task, $startTime, true);
+            $this->results[$task] = $result;
+
+            return $result;
+        } catch (\Exception $e) {
+            $this->recordMetrics($task, $startTime, false);
+            throw $e;
+        }
+    }
+
+    public function executeMultiple(array $tasks): array
+    {
+        $results = [];
+        foreach ($tasks as $name => $config) {
+            try {
+                $results[$name] = $this->execute(
+                    $config['task'],
+                    $config['params'] ?? [],
+                    $config['executor'] ?? 'default'
+                );
+            } catch (\Exception $e) {
+                $results[$name] = ['error' => $e->getMessage()];
+            }
+        }
+        return $results;
+    }
+
+    public function getResults(): array
+    {
+        return $this->results;
+    }
+
+    public function getMetrics(): array
+    {
+        return $this->metrics;
+    }
+
+    private function executeWithRetry(callable $task, array $params, TaskExecutor $executor, array $config): mixed
+    {
+        $attempts = 0;
+        $lastException = null;
+
+        while ($attempts < $config['retry_count']) {
+            try {
+                return $executor->execute($task, $params, $config);
+            } catch (\Exception $e) {
+                $lastException = $e;
+                $attempts++;
+                if ($attempts < $config['retry_count']) {
+                    sleep(pow(2, $attempts)); // Exponential backoff
+                }
+            }
+        }
+
+        throw $lastException;
+    }
+
+    private function recordMetrics(string $task, float $startTime, bool $success): void
+    {
+        $duration = microtime(true) - $startTime;
+
+        if (!isset($this->metrics[$task])) {
+            $this->metrics[$task] = [
+                'executions' => 0,
+                'successes' => 0,
+                'failures' => 0,
+                'total_duration' => 0,
+                'avg_duration' => 0
+            ];
+        }
+
+        $this->metrics[$task]['executions']++;
+        $this->metrics[$task][$success ? 'successes' : 'failures']++;
+        $this->metrics[$task]['total_duration'] += $duration;
+        $this->metrics[$task]['avg_duration'] = 
+            $this->metrics[$task]['total_duration'] / $this->metrics[$task]['executions'];
+    }
+}
+
+interface TaskExecutor 
+{
+    public function execute(callable $task, array $params, array $config): mixed;
+}
+
+class SynchronousExecutor implements TaskExecutor 
+{
+    public function execute(callable $task, array $params, array $config): mixed 
+    {
+        return $task(...$params);
+    }
+}
+
+class AsyncExecutor implements TaskExecutor 
+{
+    private array $queue = [];
+    
+    public function execute(callable $task, array $params, array $config): string 
+    {
+        $taskId = uniqid('task_', true);
+        $this->queue[$taskId] = [
+            'task' => $task,
+            'params' => $params,
+            'config' => $config,
+            'status' => 'pending'
+        ];
+        
+        $this->processAsync($taskId);
+        return $taskId;
+    }
+    
+    public function getStatus(string $taskId): ?array 
+    {
+        return $this->queue[$taskId] ?? null;
+    }
+    
+    private function processAsync(string $taskId): void 
+    {
+        // In a real implementation, this would use async processing
+        try {
+            $task = $this->queue[$taskId];
+            $result = ($task['task'])(...$task['params']);
+            
+            $this->queue[$taskId]['status'] = 'completed';
+            $this->queue[$taskId]['result'] = $result;
+        } catch (\Exception $e) {
+            $this->queue[$taskId]['status'] = 'failed';
+            $this->queue[$taskId]['error'] = $e->getMessage();
+        }
+    }
+}
+
+class BatchExecutor implements TaskExecutor 
+{
+    private int $batchSize;
+    private array $batch = [];
+    
+    public function __construct(int $batchSize = 10) 
+    {
+        $this->batchSize = $batchSize;
+    }
+    
+    public function execute(callable $task, array $params, array $config): mixed 
+    {
+        $this->batch[] = [
+            'task' => $task,
+            'params' => $params,
+            'config' => $config
+        ];
+        
+        if (count($this->batch) >= $this->batchSize) {
+            return $this->executeBatch();
+        }
+        
+        return null;
+    }
+    
+    private function executeBatch(): array 
+    {
+        $results = [];
+        foreach ($this->batch as $index => $item) {
+            try {
+                $results[$index] = ($item['task'])(...$item['params']);
+            } catch (\Exception $e) {
+                $results[$index] = ['error' => $e->getMessage()];
+            }
+        }
+        
+        $this->batch = [];
+        return $results;
+    }
+}

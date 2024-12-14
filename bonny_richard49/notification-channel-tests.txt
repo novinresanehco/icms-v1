@@ -1,0 +1,148 @@
+<?php
+
+namespace Tests\Unit\Notification\Channels;
+
+use Tests\TestCase;
+use App\Core\Notification\Channels\{
+    EmailChannel,
+    SmsChannel,
+    DatabaseChannel,
+    SlackChannel
+};
+use App\Core\Notification\Exceptions\NotificationDeliveryException;
+use App\Core\Notification\Services\NotificationTemplateService;
+use Illuminate\Support\Facades\{Mail, DB, Http};
+use Mockery;
+
+class EmailChannelTest extends TestCase
+{
+    protected $channel;
+    protected $templateService;
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+        
+        $this->templateService = Mockery::mock(NotificationTemplateService::class);
+        $this->channel = new EmailChannel($this->templateService);
+        
+        Mail::fake();
+    }
+
+    /** @test */
+    public function it_sends_email_notifications()
+    {
+        $recipient = 'test@example.com';
+        $data = [
+            'subject' => 'Test Notification',
+            'body' => 'This is a test notification',
+            'template' => 'email.notification'
+        ];
+
+        $this->templateService->shouldReceive('compile')
+            ->with('email.notification', $data)
+            ->andReturn($data);
+
+        $result = $this->channel->send($recipient, $data);
+
+        $this->assertTrue($result);
+        Mail::assertSent(function ($mail) use ($recipient, $data) {
+            return $mail->hasTo($recipient) &&
+                   $mail->subject === $data['subject'];
+        });
+    }
+
+    /** @test */
+    public function it_handles_email_delivery_failures()
+    {
+        $this->expectException(NotificationDeliveryException::class);
+
+        Mail::shouldReceive('send')
+            ->andThrow(new \Swift_TransportException('SMTP error'));
+
+        $this->channel->send('test@example.com', [
+            'subject' => 'Test',
+            'body' => 'Test'
+        ]);
+    }
+}
+
+class SmsChannelTest extends TestCase
+{
+    protected $channel;
+    protected $templateService;
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+        
+        $this->templateService = Mockery::mock(NotificationTemplateService::class);
+        $this->channel = new SmsChannel($this->templateService);
+        
+        Http::fake();
+    }
+
+    /** @test */
+    public function it_sends_sms_notifications()
+    {
+        $recipient = '+1234567890';
+        $data = [
+            'message' => 'Test SMS notification',
+            'template' => 'sms.default'
+        ];
+
+        $this->templateService->shouldReceive('compile')
+            ->with('sms.default', $data)
+            ->andReturn($data);
+
+        Http::fake([
+            'twilio.com/*' => Http::response(['status' => 'queued'], 200)
+        ]);
+
+        $result = $this->channel->send($recipient, $data);
+
+        $this->assertTrue($result);
+        Http::assertSent(function ($request) use ($recipient) {
+            return $request->hasHeader('Authorization') &&
+                   str_contains($request->url(), 'twilio.com') &&
+                   $request['To'] === $recipient;
+        });
+    }
+
+    /** @test */
+    public function it_handles_sms_delivery_failures()
+    {
+        $this->expectException(NotificationDeliveryException::class);
+
+        Http::fake([
+            'twilio.com/*' => Http::response(['error' => 'Invalid number'], 400)
+        ]);
+
+        $this->channel->send('+1234567890', [
+            'message' => 'Test'
+        ]);
+    }
+}
+
+class DatabaseChannelTest extends TestCase
+{
+    protected $channel;
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+        $this->channel = new DatabaseChannel();
+    }
+
+    /** @test */
+    public function it_stores_notifications_in_database()
+    {
+        $recipient = 1; // user_id
+        $data = [
+            'type' => 'test_notification',
+            'message' => 'Test database notification'
+        ];
+
+        $result = $this->channel->send($recipient, $data);
+
+        $this->assertTrue($

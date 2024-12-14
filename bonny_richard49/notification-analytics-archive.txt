@@ -1,0 +1,68 @@
+<?php
+
+namespace App\Core\Notification\Analytics\Archive;
+
+use Illuminate\Support\Facades\Storage;
+use App\Core\Notification\Analytics\Storage\AnalyticsStorage;
+
+class AnalyticsArchiver
+{
+    private AnalyticsStorage $storage;
+    private string $archivePath;
+    
+    public function __construct(AnalyticsStorage $storage)
+    {
+        $this->storage = $storage;
+        $this->archivePath = config('analytics.archive.path');
+    }
+
+    public function archiveAnalytics(string $type, array $filters = []): string
+    {
+        $data = $this->storage->getAnalyticsByType($type, $filters);
+        $archiveId = $this->generateArchiveId($type);
+        
+        $archiveData = [
+            'id' => $archiveId,
+            'type' => $type,
+            'created_at' => now()->toIso8601String(),
+            'filters' => $filters,
+            'data' => $data
+        ];
+
+        Storage::put(
+            $this->getArchivePath($archiveId),
+            json_encode($archiveData, JSON_PRETTY_PRINT)
+        );
+
+        return $archiveId;
+    }
+
+    public function retrieveArchive(string $archiveId): ?array
+    {
+        $path = $this->getArchivePath($archiveId);
+        
+        if (!Storage::exists($path)) {
+            return null;
+        }
+
+        return json_decode(Storage::get($path), true);
+    }
+
+    public function listArchives(string $type = null): array
+    {
+        $pattern = $type 
+            ? "{$this->archivePath}/{$type}_*.json"
+            : "{$this->archivePath}/*.json";
+
+        $files = Storage::files($pattern);
+        $archives = [];
+
+        foreach ($files as $file) {
+            $data = json_decode(Storage::get($file), true);
+            if ($data) {
+                $archives[] = [
+                    'id' => $data['id'],
+                    'type' => $data['type'],
+                    'created_at' => $data['created_at'],
+                    'filters' => $data['filters'],
+                    'size

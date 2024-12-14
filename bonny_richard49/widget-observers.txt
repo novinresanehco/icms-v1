@@ -1,0 +1,151 @@
+// app/Core/Widget/Observers/WidgetObserver.php
+<?php
+
+namespace App\Core\Widget\Observers;
+
+use App\Core\Widget\Models\Widget;
+use App\Core\Widget\Events\WidgetCreated;
+use App\Core\Widget\Events\WidgetUpdated;
+use App\Core\Widget\Events\WidgetDeleted;
+use Illuminate\Support\Facades\Cache;
+
+class WidgetObserver
+{
+    public function created(Widget $widget): void
+    {
+        event(new WidgetCreated($widget));
+        $this->clearCache($widget);
+    }
+
+    public function updated(Widget $widget): void
+    {
+        event(new WidgetUpdated($widget, $widget->getChanges()));
+        $this->clearCache($widget);
+    }
+
+    public function deleted(Widget $widget): void
+    {
+        event(new WidgetDeleted($widget));
+        $this->clearCache($widget);
+    }
+
+    public function restored(Widget $widget): void
+    {
+        $this->clearCache($widget);
+    }
+
+    public function forceDeleted(Widget $widget): void
+    {
+        $this->clearCache($widget);
+    }
+
+    protected function clearCache(Widget $widget): void
+    {
+        Cache::tags([
+            'widgets',
+            "widget:{$widget->id}",
+            "area:{$widget->area}",
+            "type:{$widget->type}"
+        ])->flush();
+    }
+}
+
+// app/Core/Widget/Observers/WidgetStateObserver.php
+<?php
+
+namespace App\Core\Widget\Observers;
+
+use App\Core\Widget\Models\Widget;
+use App\Core\Widget\Services\WidgetStateService;
+
+class WidgetStateObserver
+{
+    public function __construct(
+        private WidgetStateService $stateService
+    ) {}
+
+    public function saved(Widget $widget): void
+    {
+        if ($widget->wasChanged()) {
+            $this->stateService->recordState($widget, $widget->getChanges());
+        }
+    }
+
+    public function deleted(Widget $widget): void
+    {
+        $this->stateService->recordDeletion($widget);
+    }
+}
+
+// app/Core/Widget/Observers/WidgetMetricsObserver.php
+<?php
+
+namespace App\Core\Widget\Observers;
+
+use App\Core\Widget\Models\Widget;
+use App\Core\Widget\Services\WidgetMetricsService;
+
+class WidgetMetricsObserver
+{
+    public function __construct(
+        private WidgetMetricsService $metricsService
+    ) {}
+
+    public function created(Widget $widget): void
+    {
+        $this->metricsService->initializeMetrics($widget);
+    }
+
+    public function updated(Widget $widget): void
+    {
+        if ($widget->wasChanged()) {
+            $this->metricsService->trackChanges($widget, $widget->getChanges());
+        }
+    }
+
+    public function deleted(Widget $widget): void
+    {
+        $this->metricsService->finalizeMetrics($widget);
+    }
+}
+
+// app/Core/Widget/Observers/WidgetAuditObserver.php
+<?php
+
+namespace App\Core\Widget\Observers;
+
+use App\Core\Widget\Models\Widget;
+use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\DB;
+
+class WidgetAuditObserver
+{
+    public function created(Widget $widget): void
+    {
+        $this->logAuditEvent($widget, 'created');
+    }
+
+    public function updated(Widget $widget): void
+    {
+        $this->logAuditEvent($widget, 'updated', $widget->getChanges());
+    }
+
+    public function deleted(Widget $widget): void
+    {
+        $this->logAuditEvent($widget, 'deleted');
+    }
+
+    protected function logAuditEvent(Widget $widget, string $action, array $changes = []): void
+    {
+        DB::table('widget_audit_logs')->insert([
+            'widget_id' => $widget->id,
+            'user_id' => Auth::id(),
+            'action' => $action,
+            'old_values' => $changes['old'] ?? null,
+            'new_values' => $changes['new'] ?? null,
+            'ip_address' => request()->ip(),
+            'user_agent' => request()->userAgent(),
+            'performed_at' => now()
+        ]);
+    }
+}

@@ -1,0 +1,57 @@
+<?php
+
+return [
+    'enabled' => true,
+
+    'metrics' => [
+        'storage' => 'redis',
+        'retention' => [
+            'raw' => 24 * 3600, // 1 day
+            'aggregated' => 30 * 24 * 3600 // 30 days
+        ],
+    ],
+
+    'thresholds' => [
+        'response_time' => 200, // milliseconds
+        'database_query' => 100, // milliseconds
+        'memory_limit' => 128 * 1024 * 1024, // 128MB
+        'cpu_limit' => 80, // percentage
+        'error_rate' => 1, // errors per minute
+        'failed_jobs' => 5, // per hour
+    ],
+
+    'alerts' => [
+        'channels' => ['slack', 'email'],
+        'throttle' => [
+            'enabled' => true,
+            'frequency' => 300, // 5 minutes
+        ],
+    ],
+
+    'logging' => [
+        'level' => 'warning',
+        'channels' => ['daily', 'slack'],
+    ],
+
+    'performance' => [
+        'tracking' => [
+            'enabled' => true,
+            'sample_rate' => 0.1, // 10% of requests
+            'slow_threshold' => 1000, // milliseconds
+        ],
+    ],
+
+    'security' => [
+        'audit_log' => true,
+        'suspicious_activity' => [
+            'login_attempts' => 5,
+            'api_rate' => 100, // per minute
+            'error_threshold' => 10, // per minute
+        ],
+    ],
+
+    'resources' => [
+        'tracking' => [
+            'memory' => true,
+            'cpu' => true,
+            'disk

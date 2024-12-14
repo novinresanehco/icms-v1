@@ -1,0 +1,164 @@
+<?php
+
+namespace App\Core\Database;
+
+use App\Core\Interfaces\{
+    DatabaseManagerInterface,
+    CacheManagerInterface
+};
+use Illuminate\Support\Facades\{DB, Schema};
+use Psr\Log\LoggerInterface;
+
+class DatabaseManager implements DatabaseManagerInterface
+{
+    private CacheManagerInterface $cache;
+    private LoggerInterface $logger;
+    private array $config;
+    private array $metrics;
+
+    private const CACHE_TTL = 3600;
+    private const QUERY_TIMEOUT = 30;
+    private const MAX_ATTEMPTS = 3;
+    private const DEADLOCK_RETRY_DELAY = 1;
+    private const METRICS_KEY = 'db:metrics';
+
+    public function __construct(
+        CacheManagerInterface $cache,
+        LoggerInterface $logger
+    ) {
+        $this->cache = $cache;
+        $this->logger = $logger;
+        $this->config = config('database');
+        $this->metrics = [];
+    }
+
+    public function executeTransaction(callable $operation)
+    {
+        try {
+            DB::beginTransaction();
+
+            $startTime = microtime(true);
+            $result = $operation();
+            $duration = microtime(true) - $startTime;
+
+            $this->recordMetric('transaction', $duration);
+            
+            DB::commit();
+            return $result;
+        } catch (\Exception $e) {
+            DB::rollBack();
+            
+            $this->handleDatabaseError('transaction', $e);
+            
+            if ($this->isDeadlock($e) && $this->shouldRetry($e)) {
+                return $this->retryTransaction($operation);
+            }
+            
+            throw $e;
+        }
+    }
+
+    public function executeQuery(string $query, array $params = [])
+    {
+        try {
+            $startTime = microtime(true);
+            
+            $result = DB::select($query, $params);
+            
+            $duration = microtime(true) - $startTime;
+            $this->recordMetric('query', $duration);
+            
+            if ($duration > $this->config['slow_query_threshold']) {
+                $this->logSlowQuery($query, $params, $duration);
+            }
+            
+            return $result;
+        } catch (\Exception $e) {
+            $this->handleDatabaseError('query', $e, [
+                'query' => $query,
+                'params' => $params
+            ]);
+            throw $e;
+        }
+    }
+
+    public function executeCachedQuery(string $query, array $params = [], ?int $ttl = null)
+    {
+        $cacheKey = $this->generateCacheKey($query, $params);
+        
+        return $this->cache->remember(
+            $cacheKey,
+            $ttl ?? self::CACHE_TTL,
+            fn() => $this->executeQuery($query, $params)
+        );
+    }
+
+    public function optimizeTable(string $table): void
+    {
+        try {
+            DB::statement("OPTIMIZE TABLE {$table}");
+            $this->recordMetric('optimize', 0, $table);
+        } catch (\Exception $e) {
+            $this->handleDatabaseError('optimize', $e, ['table' => $table]);
+            throw $e;
+        }
+    }
+
+    public function createBackup(string $table): string
+    {
+        try {
+            $backupTable = $table . '_backup_' . time();
+            
+            Schema::create($backupTable, function($table) use ($table) {
+                DB::statement("CREATE TABLE {$backupTable} LIKE {$table}");
+                DB::statement("INSERT INTO {$backupTable} SELECT * FROM {$table}");
+            });
+
+            $this->recordMetric('backup', 0, $table);
+            
+            return $backupTable;
+        } catch (\Exception $e) {
+            $this->handleDatabaseError('backup', $e, ['table' => $table]);
+            throw $e;
+        }
+    }
+
+    public function restoreFromBackup(string $table, string $backupTable): void
+    {
+        try {
+            $this->executeTransaction(function() use ($table, $backupTable) {
+                DB::statement("DROP TABLE IF EXISTS {$table}");
+                DB::statement("CREATE TABLE {$table} LIKE {$backupTable}");
+                DB::statement("INSERT INTO {$table} SELECT * FROM {$backupTable}");
+            });
+
+            $this->recordMetric('restore', 0, $table);
+        } catch (\Exception $e) {
+            $this->handleDatabaseError('restore', $e, [
+                'table' => $table,
+                'backup' => $backupTable
+            ]);
+            throw $e;
+        }
+    }
+
+    public function getTableStatus(string $table): array
+    {
+        try {
+            $status = DB::select("SHOW TABLE STATUS LIKE ?", [$table])[0];
+            
+            return [
+                'rows' => $status->Rows,
+                'size' => $status->Data_length + $status->Index_length,
+                'auto_increment' => $status->Auto_increment,
+                'engine' => $status->Engine,
+                'collation' => $status->Collation,
+                'updated_at' => $status->Update_time
+            ];
+        } catch (\Exception $e) {
+            $this->handleDatabaseError('status', $e, ['table' => $table]);
+            throw $e;
+        }
+    }
+
+    protected function retryTransaction(callable $operation, int $attempt = 1

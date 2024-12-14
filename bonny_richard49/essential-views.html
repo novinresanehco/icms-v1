@@ -1,0 +1,179 @@
+<!-- admin/layouts/app.blade.php -->
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="csrf-token" content="{{ csrf_token() }}">
+    <title>{{ config('app.name') }} Admin</title>
+    <link href="{{ asset('css/app.css') }}" rel="stylesheet">
+    @stack('styles')
+</head>
+<body>
+    <div id="app">
+        @include('admin.partials.header')
+        
+        <div class="admin-container">
+            @include('admin.partials.sidebar')
+            
+            <main class="admin-content">
+                @include('admin.partials.alerts')
+                @yield('content')
+            </main>
+        </div>
+    </div>
+
+    <script>
+        window.config = {
+            baseUrl: '{{ url('/') }}',
+            csrfToken: '{{ csrf_token() }}',
+            user: @json(Auth::user())
+        };
+    </script>
+    <script src="{{ asset('js/app.js') }}"></script>
+    @stack('scripts')
+</body>
+</html>
+
+<!-- admin/partials/header.blade.php -->
+<header class="admin-header">
+    <div class="header-left">
+        <button id="sidebar-toggle">☰</button>
+        <h1>{{ config('app.name') }} Admin</h1>
+    </div>
+    
+    <div class="header-right">
+        <span>{{ Auth::user()->username }}</span>
+        <form method="POST" action="{{ route('auth.logout') }}">
+            @csrf
+            <button type="submit">Logout</button>
+        </form>
+    </div>
+</header>
+
+<!-- admin/partials/sidebar.blade.php -->
+<aside class="admin-sidebar">
+    <nav>
+        <ul>
+            <li class="{{ request()->routeIs('admin.dashboard') ? 'active' : '' }}">
+                <a href="{{ route('admin.dashboard') }}">Dashboard</a>
+            </li>
+            @can('content.view')
+            <li class="{{ request()->routeIs('admin.content.*') ? 'active' : '' }}">
+                <a href="{{ route('admin.content.index') }}">Content</a>
+            </li>
+            @endcan
+            @can('media.view')
+            <li class="{{ request()->routeIs('admin.media.*') ? 'active' : '' }}">
+                <a href="{{ route('admin.media.index') }}">Media</a>
+            </li>
+            @endcan
+        </ul>
+    </nav>
+</aside>
+
+<!-- admin/content/index.blade.php -->
+@extends('admin.layouts.app')
+
+@section('content')
+<div class="content-header">
+    <h2>Content Management</h2>
+    @can('content.create')
+    <a href="{{ route('admin.content.create') }}" class="btn-primary">Create New</a>
+    @endcan
+</div>
+
+<div class="content-table">
+    <table>
+        <thead>
+            <tr>
+                <th>Title</th>
+                <th>Status</th>
+                <th>Created</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            @foreach($content as $item)
+            <tr>
+                <td>{{ $item->title }}</td>
+                <td>{{ $item->status }}</td>
+                <td>{{ $item->created_at->format('Y-m-d H:i') }}</td>
+                <td>
+                    @can('content.edit')
+                    <a href="{{ route('admin.content.edit', $item->id) }}" class="btn-small">Edit</a>
+                    @endcan
+                    @can('content.delete')
+                    <form method="POST" action="{{ route('admin.content.destroy', $item->id) }}" class="inline">
+                        @csrf
+                        @method('DELETE')
+                        <button type="submit" class="btn-small btn-danger" onclick="return confirm('Are you sure?')">Delete</button>
+                    </form>
+                    @endcan
+                </td>
+            </tr>
+            @endforeach
+        </tbody>
+    </table>
+</div>
+
+{{ $content->links() }}
+@endsection
+
+<!-- admin/content/edit.blade.php -->
+@extends('admin.layouts.app')
+
+@section('content')
+<div class="content-header">
+    <h2>Edit Content</h2>
+</div>
+
+<form method="POST" action="{{ route('admin.content.update', $content->id) }}" class="content-form">
+    @csrf
+    @method('PUT')
+
+    <div class="form-group">
+        <label>Title</label>
+        <input type="text" name="title" value="{{ old('title', $content->title) }}" required>
+        @error('title')
+            <span class="error">{{ $message }}</span>
+        @enderror
+    </div>
+
+    <div class="form-group">
+        <label>Content</label>
+        <textarea name="content" id="content-editor" required>{{ old('content', $content->content) }}</textarea>
+        @error('content')
+            <span class="error">{{ $message }}</span>
+        @enderror
+    </div>
+
+    <div class="form-group">
+        <label>Status</label>
+        <select name="status" required>
+            <option value="draft" {{ $content->status == 'draft' ? 'selected' : '' }}>Draft</option>
+            <option value="published" {{ $content->status == 'published' ? 'selected' : '' }}>Published</option>
+        </select>
+        @error('status')
+            <span class="error">{{ $message }}</span>
+        @enderror
+    </div>
+
+    <div class="form-actions">
+        <button type="submit" class="btn-primary">Save Changes</button>
+        <a href="{{ route('admin.content.index') }}" class="btn-secondary">Cancel</a>
+    </div>
+</form>
+@endsection
+
+@push('scripts')
+<script>
+    // Critical security measures for content editor
+    document.addEventListener('DOMContentLoaded', function() {
+        const editor = document.getElementById('content-editor');
+        editor.addEventListener('input', function() {
+            this.value = DOMPurify.sanitize(this.value);
+        });
+    });
+</script>
+@endpush

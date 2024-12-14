@@ -1,0 +1,116 @@
+<?php
+
+namespace App\Core\System;
+
+use App\Core\Interfaces\{
+    BackupServiceInterface,
+    StorageServiceInterface
+};
+use Illuminate\Support\Facades\{DB, Schema};
+use Psr\Log\LoggerInterface;
+
+class BackupService implements BackupServiceInterface
+{
+    private StorageServiceInterface $storage;
+    private LoggerInterface $logger;
+    private array $config;
+
+    private const CHUNK_SIZE = 1000;
+    private const COMPRESSION_LEVEL = 9;
+    private const BACKUP_TIMEOUT = 3600;
+
+    public function __construct(
+        StorageServiceInterface $storage,
+        LoggerInterface $logger
+    ) {
+        $this->storage = $storage;
+        $this->logger = $logger;
+        $this->config = config('backup');
+    }
+
+    public function createBackup(): string 
+    {
+        try {
+            $backupId = $this->generateBackupId();
+            $backupPath = $this->getBackupPath($backupId);
+            
+            DB::beginTransaction();
+
+            // Create backup metadata
+            $metadata = $this->createBackupMetadata($backupId);
+            
+            // Backup tables
+            $tables = Schema::getTables();
+            foreach ($tables as $table) {
+                $this->backupTable($table, $backupPath);
+            }
+
+            // Store metadata
+            $this->storage->put(
+                $backupPath . '/metadata.json',
+                json_encode($metadata)
+            );
+
+            DB::commit();
+
+            $this->logger->info('Backup created successfully', [
+                'backup_id' => $backupId,
+                'tables' => count($tables)
+            ]);
+
+            return $backupId;
+        } catch (\Exception $e) {
+            DB::rollBack();
+            $this->handleBackupError($e, $backupId ?? null);
+            throw $e;
+        }
+    }
+
+    public function restore(string $backupId): bool 
+    {
+        try {
+            $backupPath = $this->getBackupPath($backupId);
+            
+            if (!$this->storage->exists($backupPath)) {
+                throw new BackupException("Backup not found: {$backupId}");
+            }
+
+            DB::beginTransaction();
+
+            // Load metadata
+            $metadata = $this->loadBackupMetadata($backupId);
+            
+            // Verify backup integrity
+            $this->verifyBackupIntegrity($backupId, $metadata);
+            
+            // Drop existing tables
+            Schema::dropAllTables();
+            
+            // Restore tables
+            foreach ($metadata['tables'] as $table) {
+                $this->restoreTable($table, $backupPath);
+            }
+
+            DB::commit();
+
+            $this->logger->info('Backup restored successfully', [
+                'backup_id' => $backupId
+            ]);
+
+            return true;
+        } catch (\Exception $e) {
+            DB::rollBack();
+            $this->handleRestoreError($e, $backupId);
+            throw $e;
+        }
+    }
+
+    protected function backupTable(string $table, string $backupPath): void
+    {
+        $count = DB::table($table)->count();
+        $chunks = ceil($count / self::CHUNK_SIZE);
+        
+        // Backup table structure
+        $structure = Schema::getConnection()
+            ->getDoctrineSchemaManager()
+            ->createSchema

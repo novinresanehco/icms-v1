@@ -1,0 +1,342 @@
+<?php
+
+namespace Tests\Unit\Notification;
+
+use Tests\TestCase;
+use App\Core\Notification\Services\{
+    NotificationService,
+    NotificationTemplateService,
+    NotificationPreferenceService
+};
+use App\Core\Notification\Channels\ChannelManager;
+use App\Core\Notification\Models\{
+    Notification,
+    NotificationTemplate,
+    NotificationPreference
+};
+use App\Core\Notification\Exceptions\{
+    NotificationValidationException,
+    NotificationTemplateNotFoundException,
+    NotificationChannelNotConfiguredException,
+    NotificationDeliveryException
+};
+use Illuminate\Foundation\Testing\RefreshDatabase;
+use Mockery;
+
+class NotificationServiceTest extends TestCase
+{
+    use RefreshDatabase;
+
+    protected $notificationService;
+    protected $templateService;
+    protected $channelManager;
+    protected $preferenceService;
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        $this->templateService = Mockery::mock(NotificationTemplateService::class);
+        $this->channelManager = Mockery::mock(ChannelManager::class);
+        $this->preferenceService = Mockery::mock(NotificationPreferenceService::class);
+
+        $this->notificationService = new NotificationService(
+            $this->templateService,
+            $this->channelManager,
+            $this->preferenceService
+        );
+    }
+
+    /** @test */
+    public function it_validates_template_existence()
+    {
+        $this->expectException(NotificationTemplateNotFoundException::class);
+
+        $this->templateService->shouldReceive('findTemplate')
+            ->with('non-existent-template')
+            ->andReturnNull();
+
+        $this->notificationService->send(
+            $this->createUser(),
+            'non-existent-template',
+            ['data' => 'test']
+        );
+    }
+
+    /** @test */
+    public function it_validates_notification_data()
+    {
+        $this->expectException(NotificationValidationException::class);
+
+        $template = new NotificationTemplate([
+            'validation_rules' => [
+                'order_id' => 'required|integer',
+                'status' => 'required|string'
+            ]
+        ]);
+
+        $this->templateService->shouldReceive('findTemplate')
+            ->with('order-notification')
+            ->andReturn($template);
+
+        $this->notificationService->send(
+            $this->createUser(),
+            'order-notification',
+            ['status' => 'shipped'] // Missing order_id
+        );
+    }
+
+    /** @test */
+    public function it_checks_channel_configuration()
+    {
+        $this->expectException(NotificationChannelNotConfiguredException::class);
+
+        $template = new NotificationTemplate([
+            'channels' => ['email', 'sms'],
+            'content' => ['subject' => 'Test', 'body' => 'Test body']
+        ]);
+
+        $this->templateService->shouldReceive('findTemplate')
+            ->andReturn($template);
+
+        $this->channelManager->shouldReceive('isConfigured')
+            ->with('sms')
+            ->andReturn(false);
+
+        $this->notificationService->send(
+            $this->createUser(),
+            'test-template',
+            ['data' => 'test']
+        );
+    }
+
+    /** @test */
+    public function it_respects_user_preferences()
+    {
+        $user = $this->createUser();
+        $template = new NotificationTemplate([
+            'channels' => ['email', 'sms', 'push'],
+            'content' => ['subject' => 'Test', 'body' => 'Test body']
+        ]);
+
+        $this->templateService->shouldReceive('findTemplate')
+            ->andReturn($template);
+
+        $this->preferenceService->shouldReceive('getUserChannelPreferences')
+            ->with($user)
+            ->andReturn([
+                'email' => true,
+                'sms' => false,
+                'push' => true
+            ]);
+
+        $this->channelManager->shouldReceive('isConfigured')
+            ->andReturn(true);
+
+        $this->channelManager->shouldReceive('send')
+            ->times(2) // Only email and push, not sms
+            ->andReturn(true);
+
+        $notification = $this->notificationService->send(
+            $user,
+            'test-template',
+            ['data' => 'test']
+        );
+
+        $this->assertEquals(['email', 'push'], $notification->sent_channels);
+    }
+
+    /** @test */
+    public function it_handles_channel_delivery_failures()
+    {
+        $user = $this->createUser();
+        $template = new NotificationTemplate([
+            'channels' => ['email'],
+            'content' => ['subject' => 'Test', 'body' => 'Test body']
+        ]);
+
+        $this->templateService->shouldReceive('findTemplate')
+            ->andReturn($template);
+
+        $this->preferenceService->shouldReceive('getUserChannelPreferences')
+            ->andReturn(['email' => true]);
+
+        $this->channelManager->shouldReceive('isConfigured')
+            ->andReturn(true);
+
+        $this->channelManager->shouldReceive('send')
+            ->andThrow(new NotificationDeliveryException('email', 'SMTP error'));
+
+        $notification = $this->notificationService->send(
+            $user,
+            'test-template',
+            ['data' => 'test']
+        );
+
+        $this->assertEquals('failed', $notification->status);
+        $this->assertNotNull($notification->failed_reason);
+    }
+
+    /** @test */
+    public function it_processes_template_variables()
+    {
+        $user = $this->createUser(['name' => 'John Doe']);
+        $template = new NotificationTemplate([
+            'channels' => ['email'],
+            'content' => [
+                'subject' => 'Hello, {{ user.name }}',
+                'body' => 'Order #{{ order.id }} is {{ order.status }}'
+            ]
+        ]);
+
+        $this->templateService->shouldReceive('findTemplate')
+            ->andReturn($template);
+
+        $this->preferenceService->shouldReceive('getUserChannelPreferences')
+            ->andReturn(['email' => true]);
+
+        $this->channelManager->shouldReceive('isConfigured')
+            ->andReturn(true);
+
+        $this->channelManager->shouldReceive('send')
+            ->withArgs(function ($channel, $recipient, $data) {
+                return $data['subject'] === 'Hello, John Doe' &&
+                       $data['body'] === 'Order #123 is shipped';
+            })
+            ->andReturn(true);
+
+        $this->notificationService->send(
+            $user,
+            'test-template',
+            [
+                'order' => [
+                    'id' => '123',
+                    'status' => 'shipped'
+                ]
+            ]
+        );
+    }
+
+    /** @test */
+    public function it_handles_concurrent_notifications()
+    {
+        $user = $this->createUser();
+        $template = new NotificationTemplate([
+            'channels' => ['email'],
+            'content' => ['subject' => 'Test', 'body' => 'Test body']
+        ]);
+
+        $this->templateService->shouldReceive('findTemplate')
+            ->andReturn($template);
+
+        $this->preferenceService->shouldReceive('getUserChannelPreferences')
+            ->andReturn(['email' => true]);
+
+        $this->channelManager->shouldReceive('isConfigured')
+            ->andReturn(true);
+
+        $this->channelManager->shouldReceive('send')
+            ->times(5)
+            ->andReturn(true);
+
+        // Simulate concurrent notifications
+        $promises = [];
+        foreach (range(1, 5) as $i) {
+            $promises[] = async(function () use ($user, $template) {
+                return $this->notificationService->send(
+                    $user,
+                    'test-template',
+                    ['iteration' => $i]
+                );
+            });
+        }
+
+        $results = await($promises);
+        $this->assertCount(5, $results);
+    }
+
+    /** @test */
+    public function it_maintains_notification_order()
+    {
+        $user = $this->createUser();
+        $template = new NotificationTemplate([
+            'channels' => ['email'],
+            'content' => ['subject' => 'Test', 'body' => 'Test body']
+        ]);
+
+        $this->templateService->shouldReceive('findTemplate')
+            ->andReturn($template);
+
+        $this->preferenceService->shouldReceive('getUserChannelPreferences')
+            ->andReturn(['email' => true]);
+
+        $this->channelManager->shouldReceive('isConfigured')
+            ->andReturn(true);
+
+        $this->channelManager->shouldReceive('send')
+            ->andReturn(true);
+
+        $notifications = collect(range(1, 5))->map(function ($i) use ($user) {
+            return $this->notificationService->send(
+                $user,
+                'test-template',
+                ['sequence' => $i]
+            );
+        });
+
+        $this->assertEquals(
+            range(1, 5),
+            $notifications->pluck('data.sequence')->toArray()
+        );
+    }
+
+    /** @test */
+    public function it_handles_rate_limiting()
+    {
+        config(['notifications.rate_limit' => 2]); // Set low rate limit for testing
+
+        $user = $this->createUser();
+        $template = new NotificationTemplate([
+            'channels' => ['email'],
+            'content' => ['subject' => 'Test', 'body' => 'Test body']
+        ]);
+
+        $this->templateService->shouldReceive('findTemplate')
+            ->andReturn($template);
+
+        $this->preferenceService->shouldReceive('getUserChannelPreferences')
+            ->andReturn(['email' => true]);
+
+        $this->channelManager->shouldReceive('isConfigured')
+            ->andReturn(true);
+
+        $this->channelManager->shouldReceive('send')
+            ->times(2)
+            ->andReturn(true);
+
+        // First two should succeed
+        $this->notificationService->send($user, 'test-template', ['data' => 1]);
+        $this->notificationService->send($user, 'test-template', ['data' => 2]);
+
+        // Third should throw rate limit exception
+        $this->expectException(NotificationRateLimitExceededException::class);
+        $this->notificationService->send($user, 'test-template', ['data' => 3]);
+    }
+
+    protected function createUser(array $attributes = [])
+    {
+        return new class($attributes) {
+            protected $attributes;
+            
+            public function __construct($attributes)
+            {
+                $this->attributes = $attributes;
+            }
+
+            public function __get($name)
+            {
+                return $this->attributes[$name] ?? null;
+            }
+        };
+    }
+}

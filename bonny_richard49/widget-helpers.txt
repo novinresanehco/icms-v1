@@ -1,0 +1,208 @@
+// app/Core/Widget/Helpers/WidgetHelper.php 
+<?php
+
+namespace App\Core\Widget\Helpers;
+
+use App\Core\Widget\Models\Widget;
+use Illuminate\Support\Collection;
+
+class WidgetHelper
+{
+    public static function groupByArea(Collection $widgets): Collection
+    {
+        return $widgets->groupBy('area');
+    }
+
+    public static function sortByOrder(Collection $widgets): Collection
+    {
+        return $widgets->sortBy('order');
+    }
+
+    public static function filterActive(Collection $widgets): Collection
+    {
+        return $widgets->where('is_active', true);
+    }
+
+    public static function formatSettings(array $settings): array
+    {
+        return array_merge([
+            'show_title' => true,
+            'cache' => true,
+            'wrapper_class' => 'widget'
+        ], $settings);
+    }
+
+    public static function getWidgetTypes(): array
+    {
+        return [
+            'content' => 'Content Widget',
+            'menu' => 'Menu Widget',
+            'social' => 'Social Widget',
+            'custom' => 'Custom Widget'
+        ];
+    }
+
+    public static function getWidgetAreas(): array
+    {
+        return [
+            'sidebar' => 'Sidebar',
+            'footer' => 'Footer', 
+            'header' => 'Header',
+            'content' => 'Content Area'
+        ];
+    }
+}
+
+// app/Core/Widget/Helpers/WidgetMetricsHelper.php
+<?php
+
+namespace App\Core\Widget\Helpers;
+
+use App\Core\Widget\Models\Widget;
+use Carbon\Carbon;
+use Illuminate\Support\Collection;
+
+class WidgetMetricsHelper
+{
+    public static function calculateAverages(array $metrics): array
+    {
+        $averages = [];
+        foreach ($metrics as $key => $values) {
+            $averages[$key] = array_sum($values) / count($values);
+        }
+        return $averages;
+    }
+
+    public static function groupByPeriod(Collection $metrics, string $period): Collection
+    {
+        return $metrics->groupBy(function ($metric) use ($period) {
+            return Carbon::parse($metric->recorded_at)->format($period);
+        });
+    }
+
+    public static function formatMetrics(array $metrics): array
+    {
+        return [
+            'views' => [
+                'total' => $metrics['views']['total'] ?? 0,
+                'unique' => $metrics['views']['unique'] ?? 0,
+            ],
+            'performance' => [
+                'load_time' => [
+                    'average' => round($metrics['performance']['load_time']['average'] ?? 0, 2),
+                    'max' => round($metrics['performance']['load_time']['max'] ?? 0, 2),
+                ],
+                'memory_usage' => [
+                    'average' => round($metrics['performance']['memory_usage']['average'] ?? 0, 2),
+                    'peak' => round($metrics['performance']['memory_usage']['peak'] ?? 0, 2),
+                ],
+            ],
+            'cache' => [
+                'hits' => $metrics['cache']['hits'] ?? 0,
+                'misses' => $metrics['cache']['misses'] ?? 0,
+                'hit_rate' => round($metrics['cache']['hit_rate'] ?? 0, 2),
+            ],
+        ];
+    }
+}
+
+// app/Core/Widget/Helpers/WidgetRenderHelper.php
+<?php
+
+namespace App\Core\Widget\Helpers;
+
+use App\Core\Widget\Models\Widget;
+
+class WidgetRenderHelper
+{
+    public static function getWrapperClasses(Widget $widget): string
+    {
+        $classes = ['widget', $widget->type . '-widget'];
+        
+        if ($widget->settings['wrapper_class'] ?? false) {
+            $classes[] = $widget->settings['wrapper_class'];
+        }
+        
+        return implode(' ', $classes);
+    }
+
+    public static function getWrapperAttributes(Widget $widget): string
+    {
+        $attributes = [
+            'data-widget-id' => $widget->id,
+            'data-widget-type' => $widget->type,
+            'data-widget-area' => $widget->area
+        ];
+
+        return collect($attributes)
+            ->map(fn($value, $key) => "{$key}=\"{$value}\"")
+            ->implode(' ');
+    }
+
+    public static function resolveView(Widget $widget): string
+    {
+        $views = [
+            "widgets.types.{$widget->type}",
+            "widgets.types.default",
+            "widgets.default"
+        ];
+
+        foreach ($views as $view) {
+            if (view()->exists($view)) {
+                return $view;
+            }
+        }
+
+        return "widgets.default";
+    }
+}
+
+// app/Core/Widget/Helpers/WidgetValidationHelper.php
+<?php
+
+namespace App\Core\Widget\Helpers;
+
+class WidgetValidationHelper
+{
+    public static function validateSettings(array $settings): array
+    {
+        $errors = [];
+
+        foreach ($settings as $key => $value) {
+            if (!self::isValidSetting($key, $value)) {
+                $errors[$key] = "Invalid setting value for {$key}";
+            }
+        }
+
+        return $errors;
+    }
+
+    public static function validateVisibilityRules(array $rules): array
+    {
+        $errors = [];
+
+        if (!isset($rules['conditions'])) {
+            $errors['conditions'] = 'Conditions are required';
+        }
+
+        if (!isset($rules['operator'])) {
+            $errors['operator'] = 'Operator is required';
+        }
+
+        if (isset($rules['operator']) && !in_array($rules['operator'], ['and', 'or'])) {
+            $errors['operator'] = 'Invalid operator';
+        }
+
+        return $errors;
+    }
+
+    private static function isValidSetting(string $key, $value): bool
+    {
+        return match($key) {
+            'cache_ttl' => is_null($value) || (is_int($value) && $value >= 0),
+            'is_active' => is_bool($value),
+            'order' => is_null($value) || (is_int($value) && $value >= 0),
+            default => true
+        };
+    }
+}

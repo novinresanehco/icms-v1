@@ -1,0 +1,66 @@
+<?php
+
+namespace App\Core\Auth\DTO;
+
+use App\Core\Shared\DTO\DataTransferObject;
+use JsonSerializable;
+
+class UserData extends DataTransferObject implements JsonSerializable
+{
+    public string $name;
+    public string $email;
+    public string $username;
+    public ?string $password;
+    public array $roles;
+    public ?array $permissions;
+    public ?array $settings;
+    public ?array $meta;
+    public bool $isActive;
+
+    public function __construct(array $data)
+    {
+        $this->name = $data['name'];
+        $this->email = $data['email'];
+        $this->username = $data['username'];
+        $this->password = $data['password'] ?? null;
+        $this->roles = $data['roles'] ?? [];
+        $this->permissions = $data['permissions'] ?? [];
+        $this->settings = $data['settings'] ?? [];
+        $this->meta = $data['meta'] ?? [];
+        $this->isActive = $data['is_active'] ?? true;
+    }
+
+    public function validate(): array
+    {
+        $errors = [];
+
+        if (empty($this->name)) {
+            $errors['name'] = 'Name is required';
+        }
+
+        if (empty($this->email)) {
+            $errors['email'] = 'Email is required';
+        } elseif (!filter_var($this->email, FILTER_VALIDATE_EMAIL)) {
+            $errors['email'] = 'Invalid email format';
+        }
+
+        if (empty($this->username)) {
+            $errors['username'] = 'Username is required';
+        } elseif (strlen($this->username) < 3) {
+            $errors['username'] = 'Username must be at least 3 characters';
+        }
+
+        if ($this->password !== null && strlen($this->password) < 8) {
+            $errors['password'] = 'Password must be at least 8 characters';
+        }
+
+        return $errors;
+    }
+
+    public function jsonSerialize(): array
+    {
+        return [
+            'name' => $this->name,
+            'email' => $this->email,
+            'username' => $this->username,
+            'roles' => $this->roles

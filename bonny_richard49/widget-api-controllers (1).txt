@@ -1,0 +1,149 @@
+// app/Core/Widget/Http/Controllers/Api/WidgetApiController.php
+<?php
+
+namespace App\Core\Widget\Http\Controllers\Api;
+
+use App\Core\Widget\Services\WidgetService;
+use App\Core\Widget\Resources\WidgetResource;
+use App\Core\Widget\Resources\WidgetCollectionResource;
+use App\Core\Widget\Http\Requests\Api\CreateWidgetRequest;
+use App\Core\Widget\Http\Requests\Api\UpdateWidgetRequest;
+use App\Http\Controllers\Controller;
+use Illuminate\Http\JsonResponse;
+
+class WidgetApiController extends Controller
+{
+    public function __construct(private WidgetService $widgetService)
+    {
+    }
+
+    public function index(): WidgetCollectionResource
+    {
+        $widgets = $this->widgetService->getAllWidgets();
+        return new WidgetCollectionResource($widgets);
+    }
+
+    public function store(CreateWidgetRequest $request): JsonResponse
+    {
+        $widget = $this->widgetService->createWidget($request->validated());
+        return (new WidgetResource($widget))
+            ->response()
+            ->setStatusCode(201);
+    }
+
+    public function show(int $id): WidgetResource
+    {
+        $widget = $this->widgetService->getWidget($id);
+        return new WidgetResource($widget);
+    }
+
+    public function update(UpdateWidgetRequest $request, int $id): WidgetResource
+    {
+        $widget = $this->widgetService->updateWidget($id, $request->validated());
+        return new WidgetResource($widget);
+    }
+
+    public function destroy(int $id): JsonResponse
+    {
+        $this->widgetService->deleteWidget($id);
+        return response()->json(null, 204);
+    }
+}
+
+// app/Core/Widget/Http/Controllers/Api/WidgetOrderApiController.php
+<?php
+
+namespace App\Core\Widget\Http\Controllers\Api;
+
+use App\Core\Widget\Services\WidgetService;
+use App\Core\Widget\Http\Requests\Api\UpdateWidgetOrderRequest;
+use App\Http\Controllers\Controller;
+use Illuminate\Http\JsonResponse;
+
+class WidgetOrderApiController extends Controller
+{
+    public function __construct(private WidgetService $widgetService)
+    {
+    }
+
+    public function update(UpdateWidgetOrderRequest $request): JsonResponse
+    {
+        $this->widgetService->updateWidgetOrder($request->validated());
+        return response()->json(['message' => 'Widget order updated successfully']);
+    }
+}
+
+// app/Core/Widget/Http/Controllers/Api/WidgetVisibilityApiController.php
+<?php
+
+namespace App\Core\Widget\Http\Controllers\Api;
+
+use App\Core\Widget\Services\WidgetService;
+use App\Core\Widget\Http\Requests\Api\UpdateWidgetVisibilityRequest;
+use App\Http\Controllers\Controller;
+use Illuminate\Http\JsonResponse;
+
+class WidgetVisibilityApiController extends Controller
+{
+    public function __construct(private WidgetService $widgetService)
+    {
+    }
+
+    public function update(UpdateWidgetVisibilityRequest $request, int $id): JsonResponse
+    {
+        $this->widgetService->updateWidgetVisibility($id, $request->validated());
+        return response()->json(['message' => 'Widget visibility updated successfully']);
+    }
+}
+
+// app/Core/Widget/Http/Controllers/Api/WidgetSettingsApiController.php
+<?php
+
+namespace App\Core\Widget\Http\Controllers\Api;
+
+use App\Core\Widget\Services\WidgetService;
+use App\Core\Widget\Http\Requests\Api\UpdateWidgetSettingsRequest;
+use App\Http\Controllers\Controller;
+use Illuminate\Http\JsonResponse;
+
+class WidgetSettingsApiController extends Controller
+{
+    public function __construct(private WidgetService $widgetService)
+    {
+    }
+
+    public function update(UpdateWidgetSettingsRequest $request, int $id): JsonResponse
+    {
+        $this->widgetService->updateWidgetSettings($id, $request->validated());
+        return response()->json(['message' => 'Widget settings updated successfully']);
+    }
+}
+
+// app/Core/Widget/Http/Controllers/Api/WidgetMetricsApiController.php
+<?php
+
+namespace App\Core\Widget\Http\Controllers\Api;
+
+use App\Core\Widget\Services\WidgetMetricsService;
+use App\Core\Widget\Resources\WidgetMetricsResource;
+use App\Core\Widget\Http\Requests\Api\GetWidgetMetricsRequest;
+use App\Http\Controllers\Controller;
+use Illuminate\Http\JsonResponse;
+
+class WidgetMetricsApiController extends Controller
+{
+    public function __construct(private WidgetMetricsService $metricsService)
+    {
+    }
+
+    public function show(GetWidgetMetricsRequest $request, int $id): WidgetMetricsResource
+    {
+        $metrics = $this->metricsService->getMetrics(
+            $id,
+            $request->get('start_date'),
+            $request->get('end_date')
+        );
+        
+        return new WidgetMetricsResource($metrics);
+    }
+}

@@ -1,0 +1,148 @@
+// app/Core/Widget/Events/WidgetAreaUpdated.php
+<?php
+
+namespace App\Core\Widget\Events;
+
+use Illuminate\Foundation\Events\Dispatchable;
+use Illuminate\Queue\SerializesModels;
+
+class WidgetAreaUpdated
+{
+    use Dispatchable, SerializesModels;
+
+    public function __construct(
+        public string $area,
+        public array $widgets
+    ) {}
+}
+
+// app/Core/Widget/Events/WidgetSettingsUpdated.php
+<?php
+
+namespace App\Core\Widget\Events;
+
+use App\Core\Widget\Models\Widget;
+use Illuminate\Foundation\Events\Dispatchable;
+use Illuminate\Queue\SerializesModels;
+
+class WidgetSettingsUpdated
+{
+    use Dispatchable, SerializesModels;
+
+    public function __construct(
+        public Widget $widget,
+        public array $settings
+    ) {}
+}
+
+// app/Core/Widget/Events/WidgetStatusChanged.php
+<?php
+
+namespace App\Core\Widget\Events;
+
+use App\Core\Widget\Models\Widget;
+use Illuminate\Foundation\Events\Dispatchable;
+use Illuminate\Queue\SerializesModels;
+
+class WidgetStatusChanged
+{
+    use Dispatchable, SerializesModels;
+
+    public function __construct(
+        public Widget $widget,
+        public bool $isActive
+    ) {}
+}
+
+// app/Core/Widget/Events/WidgetCacheCleared.php
+<?php
+
+namespace App\Core\Widget\Events;
+
+use Illuminate\Foundation\Events\Dispatchable;
+use Illuminate\Queue\SerializesModels;
+
+class WidgetCacheCleared
+{
+    use Dispatchable, SerializesModels;
+
+    public function __construct(
+        public ?string $area = null
+    ) {}
+}
+
+// app/Core/Widget/Listeners/ClearWidgetCache.php
+<?php
+
+namespace App\Core\Widget\Listeners;
+
+use App\Core\Widget\Events\WidgetAreaUpdated;
+use App\Core\Widget\Events\WidgetSettingsUpdated;
+use App\Core\Widget\Events\WidgetStatusChanged;
+use Illuminate\Support\Facades\Cache;
+
+class ClearWidgetCache
+{
+    public function handle($event): void
+    {
+        if ($event instanceof WidgetAreaUpdated) {
+            Cache::tags(['widgets', "area:{$event->area}"])->flush();
+        } elseif ($event instanceof WidgetSettingsUpdated) {
+            Cache::tags(['widgets', "widget:{$event->widget->id}"])->flush();
+        } elseif ($event instanceof WidgetStatusChanged) {
+            Cache::tags(['widgets', 'widget_status'])->flush();
+        }
+    }
+}
+
+// app/Core/Widget/Listeners/LogWidgetChanges.php
+<?php
+
+namespace App\Core\Widget\Listeners;
+
+use Illuminate\Support\Facades\Log;
+
+class LogWidgetChanges
+{
+    public function handle($event): void
+    {
+        Log::info(class_basename($event), [
+            'event' => get_class($event),
+            'data' => json_encode($event)
+        ]);
+    }
+}
+
+// app/Core/Widget/Providers/WidgetEventServiceProvider.php
+<?php
+
+namespace App\Core\Widget\Providers;
+
+use App\Core\Widget\Events\WidgetAreaUpdated;
+use App\Core\Widget\Events\WidgetSettingsUpdated;
+use App\Core\Widget\Events\WidgetStatusChanged;
+use App\Core\Widget\Events\WidgetCacheCleared;
+use App\Core\Widget\Listeners\ClearWidgetCache;
+use App\Core\Widget\Listeners\LogWidgetChanges;
+use Illuminate\Foundation\Support\Providers\EventServiceProvider as ServiceProvider;
+
+class WidgetEventServiceProvider extends ServiceProvider
+{
+    protected $listen = [
+        WidgetAreaUpdated::class => [
+            ClearWidgetCache::class,
+            LogWidgetChanges::class,
+        ],
+        WidgetSettingsUpdated::class => [
+            ClearWidgetCache::class,
+            LogWidgetChanges::class,
+        ],
+        WidgetStatusChanged::class => [
+            ClearWidgetCache::class,
+            LogWidgetChanges::class,
+        ],
+        WidgetCacheCleared::class => [
+            LogWidgetChanges::class,
+        ],
+    ];
+}

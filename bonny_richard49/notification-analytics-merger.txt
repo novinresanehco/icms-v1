@@ -1,0 +1,224 @@
+<?php
+
+namespace App\Core\Notification\Analytics\Merger;
+
+class DataMerger
+{
+    private array $mergers = [];
+    private array $validators = [];
+    private array $metrics = [];
+
+    public function addMerger(string $type, callable $merger): void
+    {
+        $this->mergers[$type] = $merger;
+    }
+
+    public function addValidator(string $type, callable $validator): void
+    {
+        $this->validators[$type] = $validator;
+    }
+
+    public function merge(array $datasets, string $mergeType, array $options = []): array
+    {
+        if (!isset($this->mergers[$mergeType])) {
+            throw new \InvalidArgumentException("Unknown merge type: {$mergeType}");
+        }
+
+        $startTime = microtime(true);
+        try {
+            $result = ($this->mergers[$mergeType])($datasets, $options);
+            
+            if (isset($this->validators[$mergeType])) {
+                $this->validate($result, $mergeType);
+            }
+
+            $this->recordMetrics($mergeType, $datasets, $result, microtime(true) - $startTime, true);
+            return $result;
+
+        } catch (\Exception $e) {
+            $this->recordMetrics($mergeType, $datasets, [], microtime(true) - $startTime, false);
+            throw $e;
+        }
+    }
+
+    public function getMetrics(): array
+    {
+        return $this->metrics;
+    }
+
+    private function validate(array $result, string $type): void
+    {
+        if (!($this->validators[$type])($result)) {
+            throw new MergeValidationException("Validation failed for merge type: {$type}");
+        }
+    }
+
+    private function recordMetrics(string $type, array $inputs, array $output, float $duration, bool $success): void
+    {
+        if (!isset($this->metrics[$type])) {
+            $this->metrics[$type] = [
+                'total_merges' => 0,
+                'successful_merges' => 0,
+                'failed_merges' => 0,
+                'total_duration' => 0,
+                'total_input_size' => 0,
+                'total_output_size' => 0
+            ];
+        }
+
+        $metrics = &$this->metrics[$type];
+        $metrics['total_merges']++;
+        $metrics[$success ? 'successful_merges' : 'failed_merges']++;
+        $metrics['total_duration'] += $duration;
+        $metrics['total_input_size'] += $this->calculateInputSize($inputs);
+        $metrics['total_output_size'] += count($output);
+    }
+
+    private function calculateInputSize(array $inputs): int
+    {
+        return array_sum(array_map('count', $inputs));
+    }
+}
+
+class UnionMerger
+{
+    public static function merge(array $datasets, array $options = []): array
+    {
+        $result = [];
+        $keyField = $options['key_field'] ?? null;
+
+        foreach ($datasets as $dataset) {
+            foreach ($dataset as $item) {
+                if ($keyField) {
+                    $key = $item[$keyField] ?? null;
+                    if ($key !== null) {
+                        $result[$key] = $item;
+                    }
+                } else {
+                    $result[] = $item;
+                }
+            }
+        }
+
+        return $keyField ? array_values($result) : $result;
+    }
+}
+
+class JoinMerger
+{
+    public static function merge(array $datasets, array $options = []): array
+    {
+        if (count($datasets) < 2) {
+            return $datasets[0] ?? [];
+        }
+
+        $joinField = $options['join_field'] ?? 'id';
+        $joinType = $options['join_type'] ?? 'inner';
+        
+        $result = $datasets[0];
+        
+        for ($i = 1; $i < count($datasets); $i++) {
+            $result = self::joinDatasets($result, $datasets[$i], $joinField, $joinType);
+        }
+
+        return $result;
+    }
+
+    private static function joinDatasets(array $left, array $right, string $joinField, string $joinType): array
+    {
+        $result = [];
+        $rightIndex = self::indexDataset($right, $joinField);
+
+        foreach ($left as $leftItem) {
+            $leftKey = $leftItem[$joinField] ?? null;
+            
+            if ($leftKey !== null && isset($rightIndex[$leftKey])) {
+                $result[] = array_merge($leftItem, $rightIndex[$leftKey]);
+            } elseif ($joinType === 'left') {
+                $result[] = $leftItem;
+            }
+        }
+
+        if ($joinType === 'full') {
+            foreach ($right as $rightItem) {
+                $rightKey = $rightItem[$joinField] ?? null;
+                if ($rightKey !== null && !isset($rightIndex[$rightKey])) {
+                    $result[] = $rightItem;
+                }
+            }
+        }
+
+        return $result;
+    }
+
+    private static function indexDataset(array $dataset, string $field): array
+    {
+        $index = [];
+        foreach ($dataset as $item) {
+            $key = $item[$field] ?? null;
+            if ($key !== null) {
+                $index[$key] = $item;
+            }
+        }
+        return $index;
+    }
+}
+
+class AggregationMerger
+{
+    public static function merge(array $datasets, array $options = []): array
+    {
+        $groupBy = $options['group_by'] ?? [];
+        $aggregates = $options['aggregates'] ?? [];
+        
+        $result = [];
+        
+        foreach ($datasets as $dataset) {
+            foreach ($dataset as $item) {
+                $key = self::buildGroupKey($item, $groupBy);
+                
+                if (!isset($result[$key])) {
+                    $result[$key] = self::initializeAggregates($aggregates);
+                    foreach ($groupBy as $field) {
+                        $result[$key][$field] = $item[$field] ?? null;
+                    }
+                }
+
+                self::updateAggregates($result[$key], $item, $aggregates);
+            }
+        }
+
+        return array_values($result);
+    }
+
+    private static function buildGroupKey(array $item, array $groupBy): string
+    {
+        $keyParts = [];
+        foreach ($groupBy as $field) {
+            $keyParts[] = $item[$field] ?? 'null';
+        }
+        return implode('|', $keyParts);
+    }
+
+    private static function initializeAggregates(array $aggregates): array
+    {
+        $initialized = [];
+        foreach ($aggregates as $field => $functions) {
+            foreach ($functions as $function) {
+                $initialized["{$function}_{$field}"] = match($function) {
+                    'count' => 0,
+                    'sum' => 0,
+                    'min' => PHP_FLOAT_MAX,
+                    'max' => PHP_FLOAT_MIN,
+                    'avg' => ['sum' => 0, 'count' => 0],
+                    default => null
+                };
+            }
+        }
+        return $initialized;
+    }
+
+    private static function updateAggregates(array &$result, array $item, array $aggregates): void
+    {
+        foreach ($aggregates as $field => $functions) {
+            $value = $item

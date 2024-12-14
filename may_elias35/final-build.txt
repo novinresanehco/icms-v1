@@ -1,0 +1,172 @@
+#!/bin/bash
+
+# Critical production deployment script
+set -e
+
+# Security Configuration
+echo "Configuring security settings..."
+php artisan key:generate --force
+php artisan storage:link
+php artisan config:cache
+php artisan route:cache
+php artisan view:cache
+
+# Database Setup
+echo "Preparing database..."
+php artisan migrate --force
+
+# Core CMS Configuration
+cat > config/cms.php << 'EOL'
+<?php
+return [
+    'auth' => [
+        'session_lifetime' => 900,
+        'rate_limit' => [
+            'attempts' => 5,
+            'decay_minutes' => 15
+        ],
+        '2fa' => [
+            'enabled' => true,
+            'timeout' => 300
+        ]
+    ],
+    'security' => [
+        'headers' => [
+            'X-Frame-Options' => 'DENY',
+            'X-XSS-Protection' => '1; mode=block',
+            'X-Content-Type-Options' => 'nosniff',
+            'Strict-Transport-Security' => 'max-age=31536000'
+        ],
+        'content_security_policy' => true
+    ],
+    'cache' => [
+        'ttl' => 3600,
+        'prefix' => 'cms_'
+    ],
+    'monitoring' => [
+        'enabled' => true,
+        'error_threshold' => 50,
+        'performance_threshold' => 500
+    ]
+];
+EOL
+
+# Infrastructure Setup
+cat > config/infrastructure.php << 'EOL'
+<?php
+return [
+    'database' => [
+        'timeout' => 60,
+        'strict' => true,
+        'encrypt' => true
+    ],
+    'cache' => [
+        'driver' => 'redis',
+        'connection' => 'cache'
+    ],
+    'session' => [
+        'driver' => 'redis',
+        'connection' => 'session',
+        'secure' => true
+    ]
+];
+EOL
+
+# Production Nginx Configuration
+cat > nginx.conf << 'EOL'
+server {
+    listen 443 ssl http2;
+    server_name _;
+    
+    ssl_certificate /etc/ssl/certs/cms.crt;
+    ssl_certificate_key /etc/ssl/private/cms.key;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers HIGH:!aNULL:!MD5;
+    
+    root /var/www/cms/public;
+    index index.php;
+    
+    location / {
+        try_files $uri $uri/ /index.php?$query_string;
+    }
+    
+    location ~ \.php$ {
+        fastcgi_pass unix:/var/run/php/php8.2-fpm.sock;
+        fastcgi_param SCRIPT_FILENAME $realpath_root$fastcgi_script_name;
+        include fastcgi_params;
+    }
+    
+    location ~ /\.(?!well-known).* {
+        deny all;
+    }
+    
+    add_header X-Frame-Options "DENY";
+    add_header X-XSS-Protection "1; mode=block";
+    add_header X-Content-Type-Options "nosniff";
+    add_header Strict-Transport-Security "max-age=31536000";
+}
+EOL
+
+# Production PHP Configuration
+cat > php.ini << 'EOL'
+display_errors = Off
+log_errors = On
+error_reporting = E_ALL & ~E_DEPRECATED & ~E_STRICT
+expose_php = Off
+max_execution_time = 30
+max_input_time = 60
+memory_limit = 128M
+post_max_size = 20M
+upload_max_filesize = 20M
+max_file_uploads = 20
+allow_url_fopen = Off
+allow_url_include = Off
+default_socket_timeout = 60
+session.cookie_secure = 1
+session.cookie_httponly = 1
+session.use_strict_mode = 1
+opcache.enable = 1
+opcache.memory_consumption = 128
+opcache.interned_strings_buffer = 8
+opcache.max_accelerated_files = 4000
+opcache.validate_timestamps = 0
+EOL
+
+# Production Redis Configuration
+cat > redis.conf << 'EOL'
+maxmemory 256mb
+maxmemory-policy allkeys-lru
+timeout 300
+tcp-keepalive 60
+requirepass "${REDIS_PASSWORD}"
+EOL
+
+# Build Frontend Assets
+echo "Building frontend..."
+npm ci --production
+npm run build
+rm -rf node_modules
+
+# Optimize Autoloader
+echo "Optimizing application..."
+composer install --no-dev --optimize-autoloader
+php artisan optimize
+
+# Security Cleanup
+echo "Performing security cleanup..."
+rm -rf .git
+rm -rf storage/logs/*.log
+rm -rf bootstrap/cache/*.php
+find . -type f -name ".env*" -delete
+find . -type f -name "*.log" -delete
+find . -type f -name "*.git*" -delete
+
+# Set Permissions
+echo "Setting secure permissions..."
+chown -R www-data:www-data .
+find . -type f -exec chmod 644 {} \;
+find . -type d -exec chmod 755 {} \;
+chmod -R 770 storage
+chmod -R 770 bootstrap/cache
+
+echo "Build complete. Ready for deployment."

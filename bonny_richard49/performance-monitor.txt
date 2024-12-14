@@ -1,0 +1,178 @@
+<?php
+
+namespace App\Core\Performance;
+
+use App\Core\Contracts\MonitoringInterface;
+use App\Core\Metrics\MetricsStore;
+use App\Core\Security\SecurityManager;
+use App\Core\Cache\CacheManager;
+use Illuminate\Support\Facades\DB;
+
+class PerformanceMonitor implements MonitoringInterface
+{
+    protected MetricsStore $metrics;
+    protected SecurityManager $security;
+    protected CacheManager $cache;
+    protected array $thresholds;
+
+    private const CACHE_TTL = 300; // 5 minutes
+    private const ALERT_THRESHOLD = 90; // 90% of limit
+
+    public function __construct(
+        MetricsStore $metrics,
+        SecurityManager $security,
+        CacheManager $cache,
+        array $thresholds
+    ) {
+        $this->metrics = $metrics;
+        $this->security = $security;
+        $this->cache = $cache;
+        $this->thresholds = $thresholds;
+    }
+
+    public function startOperation(string $operation): string
+    {
+        $monitoringId = $this->generateMonitoringId($operation);
+        
+        $this->cache->set(
+            "monitoring:{$monitoringId}:start",
+            [
+                'timestamp' => microtime(true),
+                'memory' => memory_get_usage(true),
+                'operation' => $operation
+            ],
+            self::CACHE_TTL
+        );
+
+        return $monitoringId;
+    }
+
+    public function endOperation(string $monitoringId): array
+    {
+        $start = $this->cache->get("monitoring:{$monitoringId}:start");
+        if (!$start) {
+            throw new MonitoringException("No start record found for monitoring ID: {$monitoringId}");
+        }
+
+        $metrics = $this->calculateMetrics($start);
+        $this->validateMetrics($metrics);
+        $this->storeMetrics($monitoringId, $metrics);
+
+        return $metrics;
+    }
+
+    public function checkThresholds(array $metrics): array
+    {
+        $violations = [];
+
+        foreach ($this->thresholds as $metric => $threshold) {
+            if (isset($metrics[$metric]) && $metrics[$metric] > $threshold) {
+                $violations[] = [
+                    'metric' => $metric,
+                    'value' => $metrics[$metric],
+                    'threshold' => $threshold,
+                    'percentage' => ($metrics[$metric] / $threshold) * 100
+                ];
+            }
+        }
+
+        if (!empty($violations)) {
+            $this->handleThresholdViolations($violations);
+        }
+
+        return $violations;
+    }
+
+    public function getSystemMetrics(): array
+    {
+        return [
+            'memory' => [
+                'usage' => memory_get_usage(true),
+                'peak' => memory_get_peak_usage(true),
+                'limit' => ini_get('memory_limit')
+            ],
+            'cpu' => [
+                'load' => sys_getloadavg(),
+                'cores' => php_sapi_name() === 'cli' ? shell_exec('nproc') : 1
+            ],
+            'database' => [
+                'connections' => DB::connection()->select('show status where variable_name = "Threads_connected"')[0]->Value,
+                'queries' => DB::connection()->select('show status where variable_name = "Questions"')[0]->Value
+            ],
+            'cache' => [
+                'hits' => $this->cache->get('stats:cache:hits') ?? 0,
+                'misses' => $this->cache->get('stats:cache:misses') ?? 0
+            ]
+        ];
+    }
+
+    protected function generateMonitoringId(string $operation): string
+    {
+        return uniqid("mon_{$operation}_", true);
+    }
+
+    protected function calculateMetrics(array $start): array
+    {
+        $end = microtime(true);
+        $memory = memory_get_usage(true);
+
+        return [
+            'execution_time' => ($end - $start['timestamp']) * 1000, // in milliseconds
+            'memory_peak' => memory_get_peak_usage(true),
+            'memory_increase' => $memory - $start['memory'],
+            'operation' => $start['operation'],
+            'timestamp_start' => $start['timestamp'],
+            'timestamp_end' => $end
+        ];
+    }
+
+    protected function validateMetrics(array $metrics): void
+    {
+        foreach ($metrics as $key => $value) {
+            if (!is_numeric($value) && !is_string($value)) {
+                throw new MonitoringException("Invalid metric value for {$key}");
+            }
+        }
+    }
+
+    protected function storeMetrics(string $monitoringId, array $metrics): void
+    {
+        DB::beginTransaction();
+
+        try {
+            $this->metrics->store($monitoringId, $metrics);
+            $this->updateAggregates($metrics);
+            DB::commit();
+        } catch (\Exception $e) {
+            DB::rollBack();
+            throw new MonitoringException('Failed to store metrics: ' . $e->getMessage());
+        }
+    }
+
+    protected function updateAggregates(array $metrics): void
+    {
+        $operation = $metrics['operation'];
+        $this->metrics->updateAggregates($operation, [
+            'count' => DB::raw('count + 1'),
+            'total_time' => DB::raw('total_time + ' . $metrics['execution_time']),
+            'avg_time' => DB::raw('(total_time + ' . $metrics['execution_time'] . ') / (count + 1)'),
+            'max_time' => DB::raw('GREATEST(max_time, ' . $metrics['execution_time'] . ')')
+        ]);
+    }
+
+    protected function handleThresholdViolations(array $violations): void
+    {
+        foreach ($violations as $violation) {
+            if ($violation['percentage'] >= self::ALERT_THRESHOLD) {
+                $this->sendThresholdAlert($violation);
+            }
+        }
+
+        $this->metrics->storeViolations($violations);
+    }
+
+    protected function sendThresholdAlert(array $violation): void
+    {
+        // Implement alert notification
+    }
+}

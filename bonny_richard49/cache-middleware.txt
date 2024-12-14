@@ -1,0 +1,42 @@
+// app/Core/Cache/Middleware/CacheResponse.php
+<?php
+
+namespace App\Core\Cache\Middleware;
+
+use Closure;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
+use App\Core\Cache\CacheKeyGenerator;
+
+class CacheResponse
+{
+    public function handle(Request $request, Closure $next, int $ttl = 3600)
+    {
+        if (!$this->shouldCache($request)) {
+            return $next($request);
+        }
+
+        $key = $this->getCacheKey($request);
+
+        if (Cache::has($key)) {
+            return Cache::get($key);
+        }
+
+        $response = $next($request);
+
+        if ($this->shouldCacheResponse($response)) {
+            Cache::put($key, $response, $ttl);
+        }
+
+        return $response;
+    }
+
+    private function shouldCache(Request $request): bool
+    {
+        return $request->isMethod('GET') && !$request->ajax();
+    }
+
+    private function getCacheKey(Request $request): string
+    {
+        return CacheKeyGenerator::generate('response', [
+            'url' => $request->fullUrl(),

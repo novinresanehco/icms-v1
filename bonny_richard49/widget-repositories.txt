@@ -1,0 +1,138 @@
+// app/Core/Widget/Repositories/WidgetRepository.php
+<?php
+
+namespace App\Core\Widget\Repositories;
+
+use App\Core\Widget\Models\Widget;
+use App\Core\Widget\Contracts\WidgetRepositoryInterface;
+use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Database\Eloquent\Builder;
+
+class WidgetRepository implements WidgetRepositoryInterface 
+{
+    public function find(int $id): ?Widget
+    {
+        return Cache::tags(['widgets'])->remember(
+            "widget:{$id}",
+            now()->addHour(),
+            fn() => Widget::find($id)
+        );
+    }
+
+    public function findByIdentifier(string $identifier): ?Widget
+    {
+        return Cache::tags(['widgets'])->remember(
+            "widget:identifier:{$identifier}",
+            now()->addHour(),
+            fn() => Widget::where('identifier', $identifier)->first()
+        );
+    }
+
+    public function findByArea(string $area): Collection
+    {
+        return Cache::tags(['widgets', "area:{$area}"])->remember(
+            "widgets:area:{$area}",
+            now()->addHour(),
+            fn() => Widget::where('area', $area)
+                        ->orderBy('order')
+                        ->get()
+        );
+    }
+
+    public function getActive(): Collection
+    {
+        return Cache::tags(['widgets', 'active'])->remember(
+            'widgets:active',
+            now()->addHour(),
+            fn() => Widget::where('is_active', true)
+                        ->orderBy('area')
+                        ->orderBy('order')
+                        ->get()
+        );
+    }
+
+    public function create(array $data): Widget
+    {
+        $widget = Widget::create($data);
+        $this->clearCache();
+        return $widget;
+    }
+
+    public function update(int $id, array $data): Widget
+    {
+        $widget = $this->find($id);
+        $widget->update($data);
+        $this->clearCache();
+        return $widget;
+    }
+
+    public function delete(int $id): bool
+    {
+        $widget = $this->find($id);
+        $result = $widget->delete();
+        $this->clearCache();
+        return $result;
+    }
+
+    public function updateOrder(array $order): void
+    {
+        foreach ($order as $id => $position) {
+            Widget::where('id', $id)->update(['order' => $position]);
+        }
+        $this->clearCache();
+    }
+
+    public function updateVisibility(int $id, array $rules): void
+    {
+        $widget = $this->find($id);
+        $widget->visibility_rules = $rules;
+        $widget->save();
+        $this->clearCache();
+    }
+
+    public function search(array $criteria): Collection
+    {
+        $query = Widget::query();
+        $this->applyCriteria($query, $criteria);
+        return $query->get();
+    }
+
+    protected function applyCriteria(Builder $query, array $criteria): void
+    {
+        if (!empty($criteria['keyword'])) {
+            $query->where(function($q) use ($criteria) {
+                $q->where('name', 'like', "%{$criteria['keyword']}%")
+                  ->orWhere('identifier', 'like', "%{$criteria['keyword']}%");
+            });
+        }
+
+        if (!empty($criteria['type'])) {
+            $query->where('type', $criteria['type']);
+        }
+
+        if (!empty($criteria['area'])) {
+            $query->where('area', $criteria['area']);
+        }
+
+        if (isset($criteria['is_active'])) {
+            $query->where('is_active', $criteria['is_active']);
+        }
+
+        if (!empty($criteria['visibility_rules'])) {
+            foreach ($criteria['visibility_rules'] as $key => $value) {
+                $query->whereJsonContains("visibility_rules->{$key}", $value);
+            }
+        }
+
+        if (!empty($criteria['order_by'])) {
+            $direction = $criteria['order_direction'] ?? 'asc';
+            $query->orderBy($criteria['order_by'], $direction);
+        }
+    }
+
+    protected function clearCache(): void
+    {
+        Cache::tags(['widgets'])->flush();
+    }
+}

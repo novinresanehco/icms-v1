@@ -1,0 +1,195 @@
+// app/Core/Widget/Traits/HasCache.php
+<?php
+
+namespace App\Core\Widget\Traits;
+
+use Illuminate\Support\Facades\Cache;
+
+trait HasCache
+{
+    public function getCacheKey(): string
+    {
+        return "widget:{$this->id}:rendered";
+    }
+
+    public function getCacheDuration(): int
+    {
+        return $this->cache_ttl ?? config('widgets.cache.ttl', 3600);
+    }
+
+    public function shouldCache(): bool
+    {
+        return (bool) $this->cache_ttl && config('widgets.cache.enabled', true);
+    }
+
+    public function getCacheTags(): array
+    {
+        return [
+            'widgets',
+            "widget:{$this->id}",
+            "area:{$this->area}",
+            "type:{$this->type}"
+        ];
+    }
+
+    public function clearCache(): void
+    {
+        Cache::tags($this->getCacheTags())->flush();
+    }
+}
+
+// app/Core/Widget/Traits/HasMetrics.php
+<?php
+
+namespace App\Core\Widget\Traits;
+
+use Carbon\Carbon;
+use Illuminate\Support\Facades\DB;
+
+trait HasMetrics
+{
+    public function getViewCount(): int
+    {
+        return DB::table('widget_views')
+            ->where('widget_id', $this->id)
+            ->count();
+    }
+
+    public function getUniqueViewCount(): int
+    {
+        return DB::table('widget_views')
+            ->where('widget_id', $this->id)
+            ->distinct('user_id')
+            ->count('user_id');
+    }
+
+    public function getMetrics(Carbon $start, Carbon $end): array
+    {
+        return [
+            'views' => $this->getViewMetrics($start, $end),
+            'performance' => $this->getPerformanceMetrics($start, $end),
+            'interactions' => $this->getInteractionMetrics($start, $end)
+        ];
+    }
+
+    public function trackView(): void
+    {
+        DB::table('widget_views')->insert([
+            'widget_id' => $this->id,
+            'user_id' => auth()->id(),
+            'ip_address' => request()->ip(),
+            'user_agent' => request()->userAgent(),
+            'viewed_at' => Carbon::now()
+        ]);
+    }
+
+    public function trackInteraction(string $type): void
+    {
+        DB::table('widget_interactions')->insert([
+            'widget_id' => $this->id,
+            'user_id' => auth()->id(),
+            'action' => $type,
+            'metadata' => [
+                'ip_address' => request()->ip(),
+                'user_agent' => request()->userAgent()
+            ],
+            'interacted_at' => Carbon::now()
+        ]);
+    }
+
+    protected function getViewMetrics(Carbon $start, Carbon $end): array
+    {
+        return DB::table('widget_views')
+            ->where('widget_id', $this->id)
+            ->whereBetween('viewed_at', [$start, $end])
+            ->select(
+                DB::raw('COUNT(*) as total_views'),
+                DB::raw('COUNT(DISTINCT user_id) as unique_views')
+            )
+            ->first()
+            ->toArray();
+    }
+
+    protected function getPerformanceMetrics(Carbon $start, Carbon $end): array
+    {
+        return DB::table('widget_performance')
+            ->where('widget_id', $this->id)
+            ->whereBetween('recorded_at', [$start, $end])
+            ->select(
+                DB::raw('AVG(load_time) as avg_load_time'),
+                DB::raw('MAX(load_time) as max_load_time'),
+                DB::raw('AVG(memory_usage) as avg_memory_usage')
+            )
+            ->first()
+            ->toArray();
+    }
+
+    protected function getInteractionMetrics(Carbon $start, Carbon $end): array
+    {
+        return DB::table('widget_interactions')
+            ->where('widget_id', $this->id)
+            ->whereBetween('interacted_at', [$start, $end])
+            ->select('action', DB::raw('COUNT(*) as count'))
+            ->groupBy('action')
+            ->get()
+            ->pluck('count', 'action')
+            ->toArray();
+    }
+}
+
+// app/Core/Widget/Traits/HasState.php
+<?php
+
+namespace App\Core\Widget\Traits;
+
+trait HasState
+{
+    protected array $originalState = [];
+
+    public function initializeHasState(): void
+    {
+        $this->originalState = $this->getState();
+    }
+
+    public function getState(): array
+    {
+        return [
+            'settings' => $this->settings,
+            'is_active' => $this->is_active,
+            'visibility_rules' => $this->visibility_rules,
+            'permissions' => $this->permissions,
+            'metadata' => $this->metadata
+        ];
+    }
+
+    public function setState(array $state): void
+    {
+        foreach ($state as $key => $value) {
+            if (property_exists($this, $key)) {
+                $this->{$key} = $value;
+            }
+        }
+    }
+
+    public function resetState(): void
+    {
+        $this->setState($this->originalState);
+    }
+
+    public function compareState(array $newState): array
+    {
+        $differences = [];
+        $currentState = $this->getState();
+
+        foreach ($newState as $key => $value) {
+            if (isset($currentState[$key]) && $currentState[$key] !== $value) {
+                $differences[$key] = [
+                    'old' => $currentState[$key],
+                    'new' => $value
+                ];
+            }
+        }
+
+        return $differences;
+    }
+}

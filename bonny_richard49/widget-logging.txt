@@ -1,0 +1,120 @@
+<?php
+// app/Core/Widget/Logging/WidgetLogger.php
+namespace App\Core\Widget\Logging;
+
+use App\Core\Widget\Models\Widget;
+use Illuminate\Support\Facades\Log;
+
+class WidgetLogger
+{
+    public function logCreated(Widget $widget): void 
+    {
+        Log::info('Widget created', [
+            'widget_id' => $widget->id,
+            'type' => $widget->type,
+            'area' => $widget->area,
+            'user_id' => auth()->id()
+        ]);
+    }
+
+    public function logUpdated(Widget $widget, array $changes): void
+    {
+        Log::info('Widget updated', [
+            'widget_id' => $widget->id,
+            'changes' => $changes,
+            'user_id' => auth()->id()
+        ]);
+    }
+
+    public function logDeleted(Widget $widget): void
+    {
+        Log::info('Widget deleted', [
+            'widget_id' => $widget->id,
+            'user_id' => auth()->id()
+        ]);
+    }
+
+    public function logError(\Exception $e, Widget $widget): void
+    {
+        Log::error('Widget error', [
+            'widget_id' => $widget->id,
+            'error' => $e->getMessage(),
+            'stack_trace' => $e->getTraceAsString()
+        ]);
+    }
+
+    public function logMetrics(Widget $widget, array $metrics): void
+    {
+        Log::info('Widget metrics', [
+            'widget_id' => $widget->id,
+            'metrics' => $metrics,
+            'timestamp' => now()
+        ]);
+    }
+}
+
+// app/Core/Widget/Logging/WidgetActivityLogger.php
+namespace App\Core\Widget\Logging;
+
+use App\Core\Widget\Models\Widget;
+use Illuminate\Support\Facades\DB;
+
+class WidgetActivityLogger
+{
+    public function logActivity(Widget $widget, string $action, array $data = []): void
+    {
+        DB::table('widget_activity_logs')->insert([
+            'widget_id' => $widget->id,
+            'user_id' => auth()->id(),
+            'action' => $action,
+            'data' => json_encode($data),
+            'ip_address' => request()->ip(),
+            'user_agent' => request()->userAgent(),
+            'created_at' => now()
+        ]);
+    }
+}
+
+// app/Core/Widget/Logging/WidgetPerformanceLogger.php
+namespace App\Core\Widget\Logging;
+
+use App\Core\Widget\Models\Widget;
+use Illuminate\Support\Facades\DB;
+
+class WidgetPerformanceLogger
+{
+    public function logPerformance(Widget $widget, array $metrics): void
+    {
+        DB::table('widget_performance_logs')->insert([
+            'widget_id' => $widget->id,
+            'load_time' => $metrics['load_time'] ?? null,
+            'memory_usage' => $metrics['memory_usage'] ?? null,
+            'cache_hits' => $metrics['cache_hits'] ?? 0,
+            'cache_misses' => $metrics['cache_misses'] ?? 0,
+            'database_queries' => $metrics['database_queries'] ?? 0,
+            'created_at' => now()
+        ]);
+    }
+}
+
+// app/Core/Widget/Logging/WidgetErrorLogger.php
+namespace App\Core\Widget\Logging;
+
+use App\Core\Widget\Models\Widget;
+use Illuminate\Support\Facades\DB;
+
+class WidgetErrorLogger
+{
+    public function logError(Widget $widget, \Throwable $error): void
+    {
+        DB::table('widget_error_logs')->insert([
+            'widget_id' => $widget->id,
+            'error_type' => get_class($error),
+            'error_message' => $error->getMessage(),
+            'stack_trace' => $error->getTraceAsString(),
+            'file' => $error->getFile(),
+            'line' => $error->getLine(),
+            'created_at' => now()
+        ]);
+    }
+}

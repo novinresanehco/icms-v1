@@ -1,0 +1,167 @@
+<?php
+
+namespace App\Core\Cache;
+
+use App\Core\Contracts\CacheInterface;
+use App\Core\Security\SecurityManager;
+use Illuminate\Support\Facades\Cache;
+use Psr\SimpleCache\InvalidArgumentException;
+
+class CacheManager implements CacheInterface
+{
+    protected SecurityManager $security;
+    protected string $prefix;
+    protected array $tags = [];
+    protected int $defaultTtl;
+
+    public function __construct(
+        SecurityManager $security,
+        string $prefix = '',
+        int $defaultTtl = 3600
+    ) {
+        $this->security = $security;
+        $this->prefix = $prefix;
+        $this->defaultTtl = $defaultTtl;
+    }
+
+    public function get(string $key)
+    {
+        $this->validateKey($key);
+        $fullKey = $this->getFullKey($key);
+
+        $value = $this->tags
+            ? Cache::tags($this->tags)->get($fullKey)
+            : Cache::get($fullKey);
+
+        return $this->decryptIfNeeded($value);
+    }
+
+    public function set(string $key, $value, ?int $ttl = null): bool
+    {
+        $this->validateKey($key);
+        $fullKey = $this->getFullKey($key);
+        $ttl = $ttl ?? $this->defaultTtl;
+
+        $value = $this->encryptIfNeeded($value);
+
+        return $this->tags
+            ? Cache::tags($this->tags)->put($fullKey, $value, $ttl)
+            : Cache::put($fullKey, $value, $ttl);
+    }
+
+    public function remember(string $key, callable $callback, ?int $ttl = null)
+    {
+        $this->validateKey($key);
+        $fullKey = $this->getFullKey($key);
+        $ttl = $ttl ?? $this->defaultTtl;
+
+        $value = $this->tags
+            ? Cache::tags($this->tags)->remember($fullKey, $ttl, $callback)
+            : Cache::remember($fullKey, $ttl, $callback);
+
+        return $this->decryptIfNeeded($value);
+    }
+
+    public function increment(string $key, int $value = 1): int
+    {
+        $this->validateKey($key);
+        $fullKey = $this->getFullKey($key);
+
+        return $this->tags
+            ? Cache::tags($this->tags)->increment($fullKey, $value)
+            : Cache::increment($fullKey, $value);
+    }
+
+    public function decrement(string $key, int $value = 1): int
+    {
+        $this->validateKey($key);
+        $fullKey = $this->getFullKey($key);
+
+        return $this->tags
+            ? Cache::tags($this->tags)->decrement($fullKey, $value)
+            : Cache::decrement($fullKey, $value);
+    }
+
+    public function has(string $key): bool
+    {
+        $this->validateKey($key);
+        $fullKey = $this->getFullKey($key);
+
+        return $this->tags
+            ? Cache::tags($this->tags)->has($fullKey)
+            : Cache::has($fullKey);
+    }
+
+    public function forget(string $key): bool
+    {
+        $this->validateKey($key);
+        $fullKey = $this->getFullKey($key);
+
+        return $this->tags
+            ? Cache::tags($this->tags)->forget($fullKey)
+            : Cache::forget($fullKey);
+    }
+
+    public function tags(array $tags)
+    {
+        $this->tags = array_merge($this->tags, $tags);
+        return $this;
+    }
+
+    public function flush(): bool
+    {
+        return $this->tags
+            ? Cache::tags($this->tags)->flush()
+            : Cache::flush();
+    }
+
+    protected function validateKey(string $key): void
+    {
+        if (empty($key)) {
+            throw new InvalidArgumentException('Cache key cannot be empty');
+        }
+
+        if (strlen($key) > 250) {
+            throw new InvalidArgumentException('Cache key too long');
+        }
+
+        if (!preg_match('/^[a-zA-Z0-9_.:-]+$/', $key)) {
+            throw new InvalidArgumentException('Invalid cache key format');
+        }
+    }
+
+    protected function getFullKey(string $key): string
+    {
+        return empty($this->prefix) ? $key : "{$this->prefix}:{$key}";
+    }
+
+    protected function encryptIfNeeded($value)
+    {
+        if ($this->shouldEncrypt($value)) {
+            return $this->security->encryptData($value);
+        }
+        return $value;
+    }
+
+    protected function decryptIfNeeded($value)
+    {
+        if ($this->isEncrypted($value)) {
+            return $this->security->decryptData($value);
+        }
+        return $value;
+    }
+
+    protected function shouldEncrypt($value): bool
+    {
+        return is_array($value) && array_intersect_key(
+            $value,
+            array_flip(config('cache.encrypt_fields', []))
+        );
+    }
+
+    protected function isEncrypted($value): bool
+    {
+        return is_string($value) && 
+               strpos($value, config('cache.encryption_prefix', 'eyJ')) === 0;
+    }
+}

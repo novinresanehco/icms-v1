@@ -1,0 +1,164 @@
+// app/Core/Widget/Http/Requests/Api/CreateWidgetRequest.php
+<?php
+
+namespace App\Core\Widget\Http\Requests\Api;
+
+use App\Core\Widget\Rules\WidgetIdentifier;
+use App\Core\Widget\Rules\WidgetSettings;
+use Illuminate\Foundation\Http\FormRequest;
+
+class CreateWidgetRequest extends FormRequest
+{
+    public function authorize(): bool
+    {
+        return $this->user()->can('create_widgets');
+    }
+
+    public function rules(): array
+    {
+        return [
+            'name' => ['required', 'string', 'max:255'],
+            'identifier' => ['required', 'string', 'max:255', new WidgetIdentifier],
+            'type' => ['required', 'string', 'max:50', 'in:content,menu,social,custom'],
+            'area' => ['required', 'string', 'max:50', 'in:sidebar,footer,header,content'],
+            'settings' => ['sometimes', 'array', new WidgetSettings($this->type)],
+            'order' => ['nullable', 'integer', 'min:0'],
+            'is_active' => ['boolean'],
+            'cache_ttl' => ['nullable', 'integer', 'min:0'],
+            'visibility_rules' => ['sometimes', 'array'],
+            'permissions' => ['sometimes', 'array'],
+            'metadata' => ['nullable', 'array'],
+        ];
+    }
+}
+
+// app/Core/Widget/Http/Requests/Api/UpdateWidgetRequest.php
+<?php
+
+namespace App\Core\Widget\Http\Requests\Api;
+
+use App\Core\Widget\Rules\WidgetIdentifier;
+use App\Core\Widget\Rules\WidgetSettings;
+use Illuminate\Foundation\Http\FormRequest;
+
+class UpdateWidgetRequest extends FormRequest
+{
+    public function authorize(): bool
+    {
+        return $this->user()->can('edit_widgets');
+    }
+
+    public function rules(): array
+    {
+        $widgetId = $this->route('id');
+
+        return [
+            'name' => ['sometimes', 'required', 'string', 'max:255'],
+            'identifier' => ['sometimes', 'required', 'string', 'max:255', new WidgetIdentifier($widgetId)],
+            'type' => ['sometimes', 'required', 'string', 'max:50', 'in:content,menu,social,custom'],
+            'area' => ['sometimes', 'required', 'string', 'max:50', 'in:sidebar,footer,header,content'],
+            'settings' => ['sometimes', 'array', new WidgetSettings($this->type)],
+            'order' => ['nullable', 'integer', 'min:0'],
+            'is_active' => ['boolean'],
+            'cache_ttl' => ['nullable', 'integer', 'min:0'],
+            'visibility_rules' => ['sometimes', 'array'],
+            'permissions' => ['sometimes', 'array'],
+            'metadata' => ['nullable', 'array'],
+        ];
+    }
+}
+
+// app/Core/Widget/Http/Requests/Api/UpdateWidgetOrderRequest.php
+<?php
+
+namespace App\Core\Widget\Http\Requests\Api;
+
+use Illuminate\Foundation\Http\FormRequest;
+
+class UpdateWidgetOrderRequest extends FormRequest
+{
+    public function authorize(): bool
+    {
+        return $this->user()->can('manage_widgets');
+    }
+
+    public function rules(): array
+    {
+        return [
+            'order' => ['required', 'array'],
+            'order.*' => ['required', 'integer', 'min:0'],
+        ];
+    }
+}
+
+// app/Core/Widget/Http/Requests/Api/UpdateWidgetVisibilityRequest.php
+<?php
+
+namespace App\Core\Widget\Http\Requests\Api;
+
+use App\Core\Widget\Rules\WidgetVisibilityRules;
+use Illuminate\Foundation\Http\FormRequest;
+
+class UpdateWidgetVisibilityRequest extends FormRequest
+{
+    public function authorize(): bool
+    {
+        return $this->user()->can('manage_widgets');
+    }
+
+    public function rules(): array
+    {
+        return [
+            'visibility_rules' => ['required', 'array', new WidgetVisibilityRules],
+        ];
+    }
+}
+
+// app/Core/Widget/Http/Requests/Api/UpdateWidgetSettingsRequest.php
+<?php
+
+namespace App\Core\Widget\Http\Requests\Api;
+
+use App\Core\Widget\Rules\WidgetSettings;
+use Illuminate\Foundation\Http\FormRequest;
+
+class UpdateWidgetSettingsRequest extends FormRequest
+{
+    public function authorize(): bool
+    {
+        return $this->user()->can('edit_widgets');
+    }
+
+    public function rules(): array
+    {
+        $widget = $this->route('widget');
+
+        return [
+            'settings' => ['required', 'array', new WidgetSettings($widget->type)],
+        ];
+    }
+}
+
+// app/Core/Widget/Http/Requests/Api/GetWidgetMetricsRequest.php
+<?php
+
+namespace App\Core\Widget\Http\Requests\Api;
+
+use Illuminate\Foundation\Http\FormRequest;
+
+class GetWidgetMetricsRequest extends FormRequest
+{
+    public function authorize(): bool
+    {
+        return $this->user()->can('view_widget_metrics');
+    }
+
+    public function rules(): array
+    {
+        return [
+            'start_date' => ['required', 'date'],
+            'end_date' => ['required', 'date', 'after:start_date'],
+            'metrics' => ['sometimes', 'array', 'in:views,performance,cache,interactions'],
+        ];
+    }
+}

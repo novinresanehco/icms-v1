@@ -1,0 +1,201 @@
+<?php
+
+namespace App\Core\Notification\Analytics\Services;
+
+use App\Core\Notification\Analytics\Models\{
+    AnalyticsSchedule,
+    NotificationDeliveryMetrics
+};
+use App\Core\Notification\Analytics\Events\ReportGeneratedEvent;
+use Illuminate\Support\Facades\{DB, Cache};
+use Carbon\Carbon;
+
+class AnalyticsReportGenerator 
+{
+    private array $config;
+    private array $metrics = [];
+
+    public function __construct(array $config = [])
+    {
+        $this->config = array_merge([
+            'cache_ttl' => 3600,
+            'batch_size' => 1000,
+            'date_format' => 'Y-m-d H:i:s'
+        ], $config);
+    }
+
+    public function generateReport(AnalyticsSchedule $schedule): array
+    {
+        $startTime = microtime(true);
+        $parameters = $schedule->parameters;
+        $reportType = $schedule->type;
+
+        try {
+            $data = match($reportType) {
+                'delivery_metrics' => $this->generateDeliveryMetricsReport($parameters),
+                'performance_metrics' => $this->generatePerformanceReport($parameters),
+                'engagement_metrics' => $this->generateEngagementReport($parameters),
+                'summary' => $this->generateSummaryReport($parameters),
+                default => throw new \InvalidArgumentException("Invalid report type: {$reportType}")
+            };
+
+            $report = [
+                'success' => true,
+                'type' => $reportType,
+                'data' => $data,
+                'metadata' => [
+                    'generated_at' => now()->format($this->config['date_format']),
+                    'execution_time' => microtime(true) - $startTime,
+                    'parameters' => $parameters
+                ]
+            ];
+
+            $this->cacheReport($schedule->id, $report);
+            event(new ReportGeneratedEvent($schedule, $report));
+
+            return $report;
+
+        } catch (\Exception $e) {
+            return [
+                'success' => false,
+                'type' => $reportType,
+                'error' => $e->getMessage(),
+                'metadata' => [
+                    'generated_at' => now()->format($this->config['date_format']),
+                    'execution_time' => microtime(true) - $startTime,
+                    'parameters' => $parameters
+                ]
+            ];
+        }
+    }
+
+    private function generateDeliveryMetricsReport(array $parameters): array
+    {
+        $startDate = Carbon::parse($parameters['start_date']);
+        $endDate = Carbon::parse($parameters['end_date']);
+        $groupBy = $parameters['group_by'] ?? 'daily';
+
+        $metrics = NotificationDeliveryMetrics::whereBetween('created_at', [$startDate, $endDate])
+            ->select(
+                DB::raw($this->getGroupByClause($groupBy, 'created_at') . ' as period'),
+                DB::raw('COUNT(*) as total_notifications'),
+                DB::raw('COUNT(CASE WHEN status = "delivered" THEN 1 END) as delivered'),
+                DB::raw('COUNT(CASE WHEN opened_at IS NOT NULL THEN 1 END) as opened'),
+                DB::raw('COUNT(CASE WHEN clicked_at IS NOT NULL THEN 1 END) as clicked'),
+                DB::raw('COUNT(CASE WHEN converted_at IS NOT NULL THEN 1 END) as converted'),
+                DB::raw('AVG(CASE WHEN delivered_at IS NOT NULL 
+                    THEN TIMESTAMPDIFF(SECOND, created_at, delivered_at) END) as avg_delivery_time')
+            )
+            ->groupBy('period')
+            ->orderBy('period')
+            ->get();
+
+        return [
+            'metrics' => $metrics,
+            'summary' => $this->calculateSummaryMetrics($metrics),
+            'period' => [
+                'start' => $startDate->format($this->config['date_format']),
+                'end' => $endDate->format($this->config['date_format']),
+                'group_by' => $groupBy
+            ]
+        ];
+    }
+
+    private function generatePerformanceReport(array $parameters): array
+    {
+        $startDate = Carbon::parse($parameters['start_date']);
+        $endDate = Carbon::parse($parameters['end_date']);
+
+        $metrics = DB::table('notification_analytics')
+            ->whereBetween('created_at', [$startDate, $endDate])
+            ->select(
+                'type',
+                DB::raw('AVG(delivery_time) as avg_delivery_time'),
+                DB::raw('MIN(delivery_time) as min_delivery_time'),
+                DB::raw('MAX(delivery_time) as max_delivery_time'),
+                DB::raw('COUNT(*) as total_notifications'),
+                DB::raw('SUM(CASE WHEN status = "failed" THEN 1 ELSE 0 END) as failures')
+            )
+            ->groupBy('type')
+            ->get();
+
+        return [
+            'metrics' => $metrics,
+            'aggregates' => $this->calculatePerformanceAggregates($metrics),
+            'period' => [
+                'start' => $startDate->format($this->config['date_format']),
+                'end' => $endDate->format($this->config['date_format'])
+            ]
+        ];
+    }
+
+    private function generateEngagementReport(array $parameters): array
+    {
+        $startDate = Carbon::parse($parameters['start_date']);
+        $endDate = Carbon::parse($parameters['end_date']);
+        $groupBy = $parameters['group_by'] ?? 'daily';
+
+        $metrics = NotificationDeliveryMetrics::whereBetween('created_at', [$startDate, $endDate])
+            ->select(
+                DB::raw($this->getGroupByClause($groupBy, 'created_at') . ' as period'),
+                'type',
+                DB::raw('COUNT(*) as total'),
+                DB::raw('COUNT(CASE WHEN opened_at IS NOT NULL THEN 1 END) as opened'),
+                DB::raw('COUNT(CASE WHEN clicked_at IS NOT NULL THEN 1 END) as clicked'),
+                DB::raw('COUNT(CASE WHEN converted_at IS NOT NULL THEN 1 END) as converted')
+            )
+            ->groupBy('period', 'type')
+            ->orderBy('period')
+            ->get();
+
+        return [
+            'metrics' => $metrics,
+            'rates' => $this->calculateEngagementRates($metrics),
+            'trends' => $this->analyzeEngagementTrends($metrics),
+            'period' => [
+                'start' => $startDate->format($this->config['date_format']),
+                'end' => $endDate->format($this->config['date_format']),
+                'group_by' => $groupBy
+            ]
+        ];
+    }
+
+    private function generateSummaryReport(array $parameters): array
+    {
+        $startDate = Carbon::parse($parameters['start_date']);
+        $endDate = Carbon::parse($parameters['end_date']);
+
+        return [
+            'delivery_metrics' => $this->generateDeliveryMetricsReport([
+                'start_date' => $startDate,
+                'end_date' => $endDate,
+                'group_by' => 'daily'
+            ]),
+            'performance_metrics' => $this->generatePerformanceReport([
+                'start_date' => $startDate,
+                'end_date' => $endDate
+            ]),
+            'engagement_metrics' => $this->generateEngagementReport([
+                'start_date' => $startDate,
+                'end_date' => $endDate,
+                'group_by' => 'daily'
+            ]),
+            'period' => [
+                'start' => $startDate->format($this->config['date_format']),
+                'end' => $endDate->format($this->config['date_format'])
+            ]
+        ];
+    }
+
+    private function getGroupByClause(string $groupBy, string $column): string
+    {
+        return match($groupBy) {
+            'hourly' => "DATE_FORMAT($column, '%Y-%m-%d %H:00:00')",
+            'daily' => "DATE($column)",
+            'weekly' => "DATE(DATE_SUB($column, INTERVAL WEEKDAY($column) DAY))",
+            'monthly' => "DATE_FORMAT($column, '%Y-%m-01')",
+            default => throw new \InvalidArgumentException("Invalid group by: {$groupBy}")
+        };
+    }
+
+    private function calculate

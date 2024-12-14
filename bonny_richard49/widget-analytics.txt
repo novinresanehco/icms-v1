@@ -1,0 +1,163 @@
+// app/Core/Widget/Analytics/WidgetAnalytics.php
+<?php
+
+namespace App\Core\Widget\Analytics;
+
+use App\Core\Widget\Models\Widget;
+use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\DB;
+use Carbon\Carbon;
+
+class WidgetAnalytics
+{
+    protected Collection $metrics;
+
+    public function __construct()
+    {
+        $this->metrics = collect();
+    }
+
+    public function trackView(Widget $widget): void
+    {
+        DB::table('widget_views')->insert([
+            'widget_id' => $widget->id,
+            'user_id' => auth()->id(),
+            'ip_address' => request()->ip(),
+            'user_agent' => request()->userAgent(),
+            'viewed_at' => Carbon::now()
+        ]);
+    }
+
+    public function trackInteraction(Widget $widget, string $action): void
+    {
+        DB::table('widget_interactions')->insert([
+            'widget_id' => $widget->id,
+            'user_id' => auth()->id(),
+            'action' => $action,
+            'metadata' => [
+                'ip_address' => request()->ip(),
+                'user_agent' => request()->userAgent(),
+                'referrer' => request()->header('referer')
+            ],
+            'interacted_at' => Carbon::now()
+        ]);
+    }
+
+    public function getViewMetrics(Widget $widget, Carbon $start, Carbon $end): array
+    {
+        $views = DB::table('widget_views')
+            ->where('widget_id', $widget->id)
+            ->whereBetween('viewed_at', [$start, $end])
+            ->select(DB::raw('DATE(viewed_at) as date'), DB::raw('COUNT(*) as views'))
+            ->groupBy('date')
+            ->get();
+
+        $uniqueViews = DB::table('widget_views')
+            ->where('widget_id', $widget->id)
+            ->whereBetween('viewed_at', [$start, $end])
+            ->select(DB::raw('DATE(viewed_at) as date'), DB::raw('COUNT(DISTINCT user_id) as unique_views'))
+            ->groupBy('date')
+            ->get();
+
+        return [
+            'total_views' => $views->sum('views'),
+            'unique_views' => $uniqueViews->sum('unique_views'),
+            'daily_views' => $views,
+            'daily_unique_views' => $uniqueViews
+        ];
+    }
+
+    public function getInteractionMetrics(Widget $widget, Carbon $start, Carbon $end): array
+    {
+        $interactions = DB::table('widget_interactions')
+            ->where('widget_id', $widget->id)
+            ->whereBetween('interacted_at', [$start, $end])
+            ->select('action', DB::raw('COUNT(*) as count'))
+            ->groupBy('action')
+            ->get();
+
+        $uniqueUsers = DB::table('widget_interactions')
+            ->where('widget_id', $widget->id)
+            ->whereBetween('interacted_at', [$start, $end])
+            ->select(DB::raw('COUNT(DISTINCT user_id) as unique_users'))
+            ->first();
+
+        return [
+            'total_interactions' => $interactions->sum('count'),
+            'unique_users' => $uniqueUsers->unique_users,
+            'interactions_by_type' => $interactions,
+            'interaction_rate' => $this->calculateInteractionRate($widget, $start, $end)
+        ];
+    }
+
+    public function getPerformanceMetrics(Widget $widget, Carbon $start, Carbon $end): array
+    {
+        return [
+            'average_load_time' => $this->calculateAverageLoadTime($widget, $start, $end),
+            'error_rate' => $this->calculateErrorRate($widget, $start, $end),
+            'cache_hits' => $this->calculateCacheHits($widget, $start, $end)
+        ];
+    }
+
+    protected function calculateInteractionRate(Widget $widget, Carbon $start, Carbon $end): float
+    {
+        $views = DB::table('widget_views')
+            ->where('widget_id', $widget->id)
+            ->whereBetween('viewed_at', [$start, $end])
+            ->count();
+
+        $interactions = DB::table('widget_interactions')
+            ->where('widget_id', $widget->id)
+            ->whereBetween('interacted_at', [$start, $end])
+            ->count();
+
+        return $views > 0 ? ($interactions / $views) * 100 : 0;
+    }
+
+    protected function calculateAverageLoadTime(Widget $widget, Carbon $start, Carbon $end): float
+    {
+        return DB::table('widget_performance')
+            ->where('widget_id', $widget->id)
+            ->whereBetween('recorded_at', [$start, $end])
+            ->avg('load_time') ?? 0;
+    }
+
+    protected function calculateErrorRate(Widget $widget, Carbon $start, Carbon $end): float
+    {
+        $total = DB::table('widget_performance')
+            ->where('widget_id', $widget->id)
+            ->whereBetween('recorded_at', [$start, $end])
+            ->count();
+
+        $errors = DB::table('widget_performance')
+            ->where('widget_id', $widget->id)
+            ->whereBetween('recorded_at', [$start, $end])
+            ->where('has_error', true)
+            ->count();
+
+        return $total > 0 ? ($errors / $total) * 100 : 0;
+    }
+
+    protected function calculateCacheHits(Widget $widget, Carbon $start, Carbon $end): array
+    {
+        $cacheMetrics = DB::table('widget_cache')
+            ->where('widget_id', $widget->id)
+            ->whereBetween('recorded_at', [$start, $end])
+            ->select(
+                DB::raw('SUM(CASE WHEN hit = 1 THEN 1 ELSE 0 END) as hits'),
+                DB::raw('SUM(CASE WHEN hit = 0 THEN 1 ELSE 0 END) as misses'),
+                DB::raw('COUNT(*) as total')
+            )
+            ->first();
+
+        $hitRate = $cacheMetrics->total > 0 
+            ? ($cacheMetrics->hits / $cacheMetrics->total) * 100 
+            : 0;
+
+        return [
+            'hits' => $cacheMetrics->hits,
+            'misses' => $cacheMetrics->misses,
+            'hit_rate' => $hitRate
+        ];
+    }
+}

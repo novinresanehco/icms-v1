@@ -1,0 +1,164 @@
+<?php
+
+namespace App\Policies;
+
+use App\Models\User;
+use App\Models\Media;
+use App\Core\Security\SecurityManager;
+use App\Core\Logging\AuditLogger;
+
+class MediaPolicy
+{
+    private SecurityManager $security;
+    private AuditLogger $auditLogger;
+
+    public function __construct(
+        SecurityManager $security,
+        AuditLogger $auditLogger
+    ) {
+        $this->security = $security;
+        $this->auditLogger = $auditLogger;
+    }
+
+    public function upload(User $user): bool
+    {
+        try {
+            $this->security->validateOperation('media.upload');
+            return $user->hasPermission('media.upload');
+        } catch (\Exception $e) {
+            $this->auditLogger->logPolicyFailure('media.upload', [
+                'user' => $user->id,
+                'error' => $e->getMessage()
+            ]);
+            return false;
+        }
+    }
+
+    public function view(User $user, Media $media): bool
+    {
+        try {
+            $this->security->validateOperation('media.view');
+            
+            if ($media->isPublic()) {
+                return true;
+            }
+
+            return $user->hasPermission('media.view') || 
+                   $user->id === $media->user_id;
+                   
+        } catch (\Exception $e) {
+            $this->auditLogger->logPolicyFailure('media.view', [
+                'user' => $user->id,
+                'media' => $media->id,
+                'error' => $e->getMessage()
+            ]);
+            return false;
+        }
+    }
+
+    public function update(User $user, Media $media): bool
+    {
+        try {
+            $this->security->validateOperation('media.update');
+            
+            return $user->hasPermission('media.update') || 
+                   $user->id === $media->user_id;
+                   
+        } catch (\Exception $e) {
+            $this->auditLogger->logPolicyFailure('media.update', [
+                'user' => $user->id,
+                'media' => $media->id,
+                'error' => $e->getMessage()
+            ]);
+            return false;
+        }
+    }
+
+    public function delete(User $user, Media $media): bool
+    {
+        try {
+            $this->security->validateOperation('media.delete');
+            
+            if ($media->isInUse()) {
+                return false;
+            }
+
+            return $user->hasPermission('media.delete') || 
+                   $user->id === $media->user_id;
+                   
+        } catch (\Exception $e) {
+            $this->auditLogger->logPolicyFailure('media.delete', [
+                'user' => $user->id,
+                'media' => $media->id,
+                'error' => $e->getMessage()
+            ]);
+            return false;
+        }
+    }
+
+    public function optimize(User $user, Media $media): bool
+    {
+        try {
+            $this->security->validateOperation('media.optimize');
+            return $user->hasPermission('media.optimize');
+        } catch (\Exception $e) {
+            $this->auditLogger->logPolicyFailure('media.optimize', [
+                'user' => $user->id,
+                'media' => $media->id,
+                'error' => $e->getMessage()
+            ]);
+            return false;
+        }
+    }
+
+    public function generateThumbnails(User $user, Media $media): bool
+    {
+        try {
+            $this->security->validateOperation('media.thumbnails');
+            
+            if (!$media->isImage()) {
+                return false;
+            }
+
+            return $user->hasPermission('media.thumbnails');
+            
+        } catch (\Exception $e) {
+            $this->auditLogger->logPolicyFailure('media.thumbnails', [
+                'user' => $user->id,
+                'media' => $media->id,
+                'error' => $e->getMessage()
+            ]);
+            return false;
+        }
+    }
+
+    public function move(User $user, Media $media): bool
+    {
+        try {
+            $this->security->validateOperation('media.move');
+            return $user->hasPermission('media.move');
+        } catch (\Exception $e) {
+            $this->auditLogger->logPolicyFailure('media.move', [
+                'user' => $user->id,
+                'media' => $media->id,
+                'error' => $e->getMessage()
+            ]);
+            return false;
+        }
+    }
+
+    public function copy(User $user, Media $media): bool
+    {
+        try {
+            $this->security->validateOperation('media.copy');
+            return $user->hasPermission('media.copy');
+        } catch (\Exception $e) {
+            $this->auditLogger->logPolicyFailure('media.copy', [
+                'user' => $user->id,
+                'media' => $media->id,
+                'error' => $e->getMessage()
+            ]);
+            return false;
+        }
+    }
+}

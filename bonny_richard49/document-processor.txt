@@ -1,0 +1,195 @@
+<?php
+
+namespace App\Core\CMS\Media\Processors;
+
+class DocumentProcessor implements DocumentProcessorInterface 
+{
+    private SecurityService $security;
+    private ValidationService $validator;
+    private PdfProcessor $pdfProcessor;
+    private OfficeProcessor $officeProcessor;
+    private array $config;
+
+    public function process(UploadedFile $file, array $options = []): ProcessedFile
+    {
+        $operationId = uniqid('doc_process_', true);
+
+        try {
+            // Validate document
+            $this->validateDocument($file);
+
+            // Process based on type
+            $processed = match($file->getMimeType()) {
+                'application/pdf' => $this->processPdf($file, $options),
+                'application/msword',
+                'application/vnd.openxmlformats-officedocument.wordprocessingml.document' 
+                    => $this->processOfficeDocument($file, $options),
+                default => throw new ProcessingException('Unsupported document type')
+            };
+
+            // Post-process
+            $this->postProcess($processed, $options);
+
+            // Log success
+            $this->logSuccess($file, $processed, $operationId);
+
+            return $processed;
+
+        } catch (\Throwable $e) {
+            $this->handleProcessingFailure($e, $file, $operationId);
+            throw $e;
+        }
+    }
+
+    protected function validateDocument(UploadedFile $file): void
+    {
+        // Check file structure
+        if (!$this->validator->validateDocumentStructure($file)) {
+            throw new ValidationException('Invalid document structure');
+        }
+
+        // Security scan
+        $this->security->scanDocument($file->path());
+
+        // Check for malicious content
+        if ($this->security->containsMaliciousContent($file)) {
+            throw new SecurityException('Malicious content detected');
+        }
+
+        // Validate file size
+        if ($file->getSize() > $this->config['max_document_size']) {
+            throw new ValidationException('Document size exceeds limit');
+        }
+    }
+
+    protected function processPdf(UploadedFile $file, array $options): ProcessedFile
+    {
+        // Additional PDF validation
+        $this->pdfProcessor->validatePdf($file);
+
+        // Process PDF
+        $processed = $this->pdfProcessor->process($file, [
+            'optimize' => $options['optimize'] ?? true,
+            'extract_text' => $options['extract_text'] ?? true,
+            'sanitize' => $options['sanitize'] ?? true,
+            'max_pages' => $this->config['max_pdf_pages']
+        ]);
+
+        // Generate preview if requested
+        if ($options['generate_preview'] ?? true) {
+            $processed->preview = $this->pdfProcessor->generatePreview($file, [
+                'page' => 1,
+                'width' => $this->config['preview_width'],
+                'height' => $this->config['preview_height']
+            ]);
+        }
+
+        return $processed;
+    }
+
+    protected function processOfficeDocument(UploadedFile $file, array $options): ProcessedFile
+    {
+        // Additional Office document validation
+        $this->officeProcessor->validateOfficeDoc($file);
+
+        // Process Office document
+        $processed = $this->officeProcessor->process($file, [
+            'convert_to_pdf' => $options['convert_to_pdf'] ?? true,
+            'extract_text' => $options['extract_text'] ?? true,
+            'sanitize' => $options['sanitize'] ?? true,
+            'remove_macros' => $options['remove_macros'] ?? true
+        ]);
+
+        // Generate preview if requested
+        if ($options['generate_preview'] ?? true) {
+            $processed->preview = $this->officeProcessor->generatePreview($file, [
+                'page' => 1,
+                'width' => $this->config['preview_width'],
+                'height' => $this->config['preview_height']
+            ]);
+        }
+
+        return $processed;
+    }
+
+    protected function postProcess(ProcessedFile $processed, array $options): void
+    {
+        // Extract metadata if needed
+        if ($options['extract_metadata'] ?? true) {
+            $processed->metadata = $this->extractMetadata($processed);
+        }
+
+        // Apply watermark if needed
+        if ($options['watermark'] ?? false) {
+            $this->applyWatermark($processed);
+        }
+
+        // Optimize file size if needed
+        if ($options['optimize'] ?? true) {
+            $this->optimizeFile($processed);
+        }
+    }
+
+    protected function extractMetadata(ProcessedFile $file): array
+    {
+        $metadata = [];
+
+        try {
+            // Extract common metadata
+            $metadata = array_merge($metadata, [
+                'title' => $this->getDocumentTitle($file),
+                'author' => $this->getDocumentAuthor($file),
+                'created_at' => $this->getDocumentCreationDate($file),
+                'modified_at' => $this->getDocumentModificationDate($file),
+                'pages' => $this->getDocumentPages($file)
+            ]);
+
+            // Extract document-specific metadata
+            if ($file->getMimeType() === 'application/pdf') {
+                $metadata = array_merge($metadata, $this->pdfProcessor->extractMetadata($file));
+            } else {
+                $metadata = array_merge($metadata, $this->officeProcessor->extractMetadata($file));
+            }
+
+        } catch (\Throwable $e) {
+            $this->logger->warning('Failed to extract document metadata', [
+                'error' => $e->getMessage(),
+                'file' => $file->getFileName()
+            ]);
+        }
+
+        return $metadata;
+    }
+
+    protected function applyWatermark(ProcessedFile $file): void
+    {
+        if ($file->getMimeType() === 'application/pdf') {
+            $this->pdfProcessor->applyWatermark($file, $this->config['watermark']);
+        } else {
+            $this->officeProcessor->applyWatermark($file, $this->config['watermark']);
+        }
+    }
+
+    protected function optimizeFile(ProcessedFile $file): void
+    {
+        if ($file->getMimeType() === 'application/pdf') {
+            $this->pdfProcessor->optimize($file);
+        } else {
+            $this->officeProcessor->optimize($file);
+        }
+    }
+
+    protected function handleProcessingFailure(
+        \Throwable $e,
+        UploadedFile $file,
+        string $operationId
+    ): void {
+        $this->logger->error('Document processing failed', [
+            'operation_id' => $operationId,
+            'filename' => $file->getClientOriginalName(),
+            'mime_type' => $file->getMimeType(),
+            'error' => $e->getMessage(),
+            'trace' => $e->getTraceAsString()
+        ]);
+
+        if ($this->isCrit

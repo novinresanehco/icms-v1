@@ -1,0 +1,223 @@
+// app/Core/Widget/Factories/WidgetFactory.php
+<?php
+
+namespace App\Core\Widget\Factories;
+
+use App\Core\Widget\Models\Widget;
+use App\Core\Widget\Interfaces\WidgetFactoryInterface;
+use App\Core\Widget\Interfaces\WidgetInterface;
+use Illuminate\Support\Str;
+
+class WidgetFactory implements WidgetFactoryInterface
+{
+    protected array $types = [];
+
+    public function __construct()
+    {
+        $this->registerDefaultTypes();
+    }
+
+    public function create(string $type, array $attributes = []): WidgetInterface
+    {
+        $this->validateType($type);
+
+        $class = $this->types[$type];
+        
+        return new $class(array_merge([
+            'type' => $type,
+            'identifier' => $this->generateIdentifier($type),
+            'is_active' => true,
+        ], $attributes));
+    }
+
+    public function createFromConfig(array $config): WidgetInterface
+    {
+        $type = $config['type'] ?? null;
+        
+        if (!$type) {
+            throw new \InvalidArgumentException('Widget type must be specified');
+        }
+
+        return $this->create($type, $config);
+    }
+
+    public function getAvailableTypes(): array
+    {
+        return array_keys($this->types);
+    }
+
+    public function registerType(string $type, string $class): void
+    {
+        if (!class_exists($class)) {
+            throw new \InvalidArgumentException("Class {$class} does not exist");
+        }
+
+        if (!is_subclass_of($class, WidgetInterface::class)) {
+            throw new \InvalidArgumentException("Class {$class} must implement WidgetInterface");
+        }
+
+        $this->types[$type] = $class;
+    }
+
+    protected function registerDefaultTypes(): void
+    {
+        $types = config('widgets.types', []);
+        
+        foreach ($types as $type => $class) {
+            $this->registerType($type, $class);
+        }
+    }
+
+    protected function validateType(string $type): void
+    {
+        if (!isset($this->types[$type])) {
+            throw new \InvalidArgumentException("Invalid widget type: {$type}");
+        }
+    }
+
+    protected function generateIdentifier(string $type): string
+    {
+        return Str::slug($type . '-' . Str::random(8));
+    }
+}
+
+// app/Core/Widget/Factories/WidgetSettingsFactory.php
+<?php
+
+namespace App\Core\Widget\Factories;
+
+use App\Core\Widget\Models\Widget;
+
+class WidgetSettingsFactory
+{
+    public function createDefault(string $type): array
+    {
+        return match($type) {
+            'content' => $this->createContentSettings(),
+            'menu' => $this->createMenuSettings(),
+            'social' => $this->createSocialSettings(),
+            'custom' => $this->createCustomSettings(),
+            default => []
+        };
+    }
+
+    public function createContentSettings(): array
+    {
+        return [
+            'title' => true,
+            'content_type' => 'text',
+            'max_items' => 5,
+            'show_date' => true,
+            'show_author' => true,
+            'excerpt_length' => 150,
+            'cache_duration' => 3600,
+        ];
+    }
+
+    public function createMenuSettings(): array
+    {
+        return [
+            'menu_id' => null,
+            'depth' => 1,
+            'show_description' => false,
+            'class' => 'menu-widget',
+            'cache_duration' => 3600,
+        ];
+    }
+
+    public function createSocialSettings(): array
+    {
+        return [
+            'networks' => [
+                'facebook' => '',
+                'twitter' => '',
+                'instagram' => '',
+                'linkedin' => '',
+            ],
+            'show_icons' => true,
+            'show_labels' => true,
+            'target' => '_blank',
+            'cache_duration' => 86400,
+        ];
+    }
+
+    public function createCustomSettings(): array
+    {
+        return [
+            'template' => 'default',
+            'cache' => true,
+            'wrapper_class' => 'custom-widget',
+            'data' => [],
+            'cache_duration' => 3600,
+        ];
+    }
+}
+
+// app/Core/Widget/Factories/WidgetViewFactory.php
+<?php
+
+namespace App\Core\Widget\Factories;
+
+use App\Core\Widget\Models\Widget;
+use Illuminate\View\View;
+use Illuminate\Support\Facades\View as ViewFacade;
+
+class WidgetViewFactory
+{
+    public function create(Widget $widget): View
+    {
+        $view = $this->resolveView($widget);
+        $data = $this->prepareViewData($widget);
+
+        return ViewFacade::make($view, $data);
+    }
+
+    protected function resolveView(Widget $widget): string
+    {
+        $customView = "widgets.types.{$widget->type}";
+        
+        if (ViewFacade::exists($customView)) {
+            return $customView;
+        }
+
+        return 'widgets.default';
+    }
+
+    protected function prepareViewData(Widget $widget): array
+    {
+        return [
+            'widget' => $widget,
+            'settings' => $widget->settings,
+            'metadata' => $widget->metadata,
+            'content' => $this->prepareContent($widget),
+        ];
+    }
+
+    protected function prepareContent(Widget $widget): array
+    {
+        return match($widget->type) {
+            'content' => $this->prepareContentData($widget),
+            'menu' => $this->prepareMenuData($widget),
+            'social' => $this->prepareSocialData($widget),
+            default => [],
+        };
+    }
+
+    protected function prepareContentData(Widget $widget): array
+    {
+        // Implementation
+        return [];
+    }
+
+    protected function prepareMenuData(Widget $widget): array
+    {
+        // Implementation
+        return [];
+    }
+
+    protected function prepareSocialData(Widget $widget): array
+    {
+        // Implementation
+        return [];
+    }
+}

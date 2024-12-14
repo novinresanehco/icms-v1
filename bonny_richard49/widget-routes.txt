@@ -1,0 +1,38 @@
+// routes/api.php
+Route::middleware(['auth:sanctum'])
+    ->prefix('api/widgets')
+    ->group(function () {
+        Route::get('/', [WidgetApiController::class, 'index']);
+        Route::post('/', [WidgetApiController::class, 'store']);
+        Route::get('/{id}', [WidgetApiController::class, 'show']);
+        Route::put('/{id}', [WidgetApiController::class, 'update']);
+        Route::delete('/{id}', [WidgetApiController::class, 'destroy']);
+        
+        Route::put('/order', [WidgetOrderApiController::class, 'update']);
+        Route::put('/{id}/visibility', [WidgetVisibilityApiController::class, 'update']);
+        Route::put('/{id}/settings', [WidgetSettingsApiController::class, 'update']);
+        Route::get('/{id}/metrics', [WidgetMetricsApiController::class, 'show']);
+    });
+
+// routes/widget.php
+<?php
+
+use App\Core\Widget\Http\Controllers\WidgetController;
+
+Route::middleware(['auth', 'verified'])
+    ->prefix('admin/widgets')
+    ->group(function () {
+        Route::get('/', [WidgetController::class, 'index'])->name('widgets.index');
+        Route::get('/create', [WidgetController::class, 'create'])->name('widgets.create');
+        Route::post('/', [WidgetController::class, 'store'])->name('widgets.store');
+        Route::get('/{id}', [WidgetController::class, 'show'])->name('widgets.show');
+        Route::get('/{id}/edit', [WidgetController::class, 'edit'])->name('widgets.edit');
+        Route::put('/{id}', [WidgetController::class, 'update'])->name('widgets.update');
+        Route::delete('/{id}', [WidgetController::class, 'destroy'])->name('widgets.destroy');
+        
+        Route::get('/{id}/settings', [WidgetSettingsController::class, 'edit'])->name('widgets.settings.edit');
+        Route::put('/{id}/settings', [WidgetSettingsController::class, 'update'])->name('widgets.settings.update');
+        
+        Route::get('/areas/{area}', [WidgetAreaController::class, 'show'])->name('widgets.areas.show');
+        Route::put('/areas/{area}/order', [WidgetAreaController::class, 'updateOrder'])->name('widgets.areas.order');
+    });

@@ -1,0 +1,477 @@
+<?php
+
+namespace App\Core\Backup;
+
+use App\Core\Security\CoreSecurityManager;
+use App\Core\Services\ValidationService;
+use App\Core\Services\AuditService;
+use App\Core\Exceptions\BackupException;
+use Illuminate\Support\Facades\Storage;
+
+class BackupManager
+{
+    private CoreSecurityManager $security;
+    private ValidationService $validator;
+    private AuditService $audit;
+    private array $config;
+
+    public function __construct(
+        CoreSecurityManager $security,
+        ValidationService $validator,
+        AuditService $audit,
+        array $config
+    ) {
+        $this->security = $security;
+        $this->validator = $validator;
+        $this->audit = $audit;
+        $this->config = $config;
+    }
+
+    public function createBackup(array $options = []): BackupResult
+    {
+        return $this->security->executeCriticalOperation(
+            fn() => $this->executeBackup($options),
+            ['operation' => 'backup_create']
+        );
+    }
+
+    public function restore(string $backupId, array $options = []): RestoreResult
+    {
+        return $this->security->executeCriticalOperation(
+            fn() => $this->executeRestore($backupId, $options),
+            ['operation' => 'backup_restore', 'backup_id' => $backupId]
+        );
+    }
+
+    public function verify(string $backupId): VerificationResult
+    {
+        return $this->security->executeCriticalOperation(
+            fn() => $this->executeVerification($backupId),
+            ['operation' => 'backup_verify', 'backup_id' => $backupId]
+        );
+    }
+
+    private function executeBackup(array $options): BackupResult
+    {
+        try {
+            // Generate backup ID
+            $backupId = $this->generateBackupId();
+
+            // Create backup manifest
+            $manifest = $this->createBackupManifest($backupId, $options);
+
+            // Initialize backup storage
+            $storage = $this->initializeBackupStorage($backupId);
+
+            // Backup database
+            $this->backupDatabase($storage, $manifest);
+
+            // Backup files
+            $this->backupFiles($storage, $manifest);
+
+            // Generate checksums
+            $this->generateBackupChecksums($storage, $manifest);
+
+            // Encrypt backup
+            $this->encryptBackup($storage, $manifest);
+
+            // Store manifest
+            $this->storeBackupManifest($storage, $manifest);
+
+            // Verify backup integrity
+            $this->verifyBackupIntegrity($backupId);
+
+            // Log backup completion
+            $this->logBackupSuccess($backupId, $manifest);
+
+            return new BackupResult([
+                'backup_id' => $backupId,
+                'manifest' => $manifest,
+                'size' => $storage->size(),
+                'created_at' => now()
+            ]);
+
+        } catch (\Exception $e) {
+            $this->handleBackupFailure($e, $backupId ?? null);
+            throw new BackupException('Backup failed: ' . $e->getMessage());
+        }
+    }
+
+    private function executeRestore(string $backupId, array $options): RestoreResult
+    {
+        try {
+            // Verify backup exists and is valid
+            $this->verifyBackup($backupId);
+
+            // Load backup manifest
+            $manifest = $this->loadBackupManifest($backupId);
+
+            // Initialize restore storage
+            $storage = $this->initializeRestoreStorage($backupId);
+
+            // Create pre-restore snapshot
+            $snapshotId = $this->createSystemSnapshot();
+
+            try {
+                // Decrypt backup
+                $this->decryptBackup($storage, $manifest);
+
+                // Verify checksums
+                $this->verifyBackupChecksums($storage, $manifest);
+
+                // Restore database
+                $this->restoreDatabase($storage, $manifest);
+
+                // Restore files
+                $this->restoreFiles($storage, $manifest);
+
+                // Verify restore integrity
+                $this->verifyRestoreIntegrity($manifest);
+
+                // Log restore success
+                $this->logRestoreSuccess($backupId, $manifest);
+
+                return new RestoreResult([
+                    'success' => true,
+                    'backup_id' => $backupId,
+                    'restored_at' => now()
+                ]);
+
+            } catch (\Exception $e) {
+                // Rollback to pre-restore snapshot
+                $this->rollbackToSnapshot($snapshotId);
+                throw $e;
+            }
+
+        } catch (\Exception $e) {
+            $this->handleRestoreFailure($e, $backupId);
+            throw new BackupException('Restore failed: ' . $e->getMessage());
+        }
+    }
+
+    private function executeVerification(string $backupId): VerificationResult
+    {
+        try {
+            // Load backup manifest
+            $manifest = $this->loadBackupManifest($backupId);
+
+            // Initialize backup storage
+            $storage = $this->initializeBackupStorage($backupId);
+
+            // Verify backup structure
+            $structureValid = $this->verifyBackupStructure($storage, $manifest);
+
+            // Verify encryption
+            $encryptionValid = $this->verifyBackupEncryption($storage, $manifest);
+
+            // Verify checksums
+            $checksumsValid = $this->verifyBackupChecksums($storage, $manifest);
+
+            // Verify database backup
+            $databaseValid = $this->verifyDatabaseBackup($storage, $manifest);
+
+            // Verify file backups
+            $filesValid = $this->verifyFileBackups($storage, $manifest);
+
+            // Log verification results
+            $this->logVerificationResults($backupId, [
+                'structure' => $structureValid,
+                'encryption' => $encryptionValid,
+                'checksums' => $checksumsValid,
+                'database' => $databaseValid,
+                'files' => $filesValid
+            ]);
+
+            return new VerificationResult([
+                'backup_id' => $backupId,
+                'valid' => $structureValid && 
+                          $encryptionValid && 
+                          $checksumsValid && 
+                          $databaseValid && 
+                          $filesValid,
+                'checks' => [
+                    'structure' => $structureValid,
+                    'encryption' => $encryptionValid,
+                    'checksums' => $checksumsValid,
+                    'database' => $databaseValid,
+                    'files' => $filesValid
+                ],
+                'verified_at' => now()
+            ]);
+
+        } catch (\Exception $e) {
+            $this->handleVerificationFailure($e, $backupId);
+            throw new BackupException('Verification failed: ' . $e->getMessage());
+        }
+    }
+
+    private function generateBackupId(): string
+    {
+        return uniqid('backup_', true);
+    }
+
+    private function createBackupManifest(string $backupId, array $options): array
+    {
+        return [
+            'backup_id' => $backupId,
+            'created_at' => now()->toIso8601String(),
+            'type' => $options['type'] ?? 'full',
+            'encryption' => [
+                'algorithm' => 'AES-256-GCM',
+                'key_id' => $this->generateEncryptionKeyId()
+            ],
+            'components' => [
+                'database' => true,
+                'files' => $options['include_files'] ?? true,
+                'media' => $options['include_media'] ?? true
+            ],
+            'metadata' => [
+                'version' => $this->config['version'],
+                'environment' => app()->environment(),
+                'created_by' => auth()->id()
+            ]
+        ];
+    }
+
+    private function initializeBackupStorage(string $backupId): Storage
+    {
+        $disk = Storage::disk($this->config['backup_disk']);
+        
+        if (!$disk->exists($backupId)) {
+            $disk->makeDirectory($backupId);
+        }
+
+        return $disk;
+    }
+
+    private function backupDatabase(Storage $storage, array $manifest): void
+    {
+        foreach ($this->getDatabaseConnections() as $connection) {
+            $dump = $this->createDatabaseDump($connection);
+            $encrypted = $this->encryptData($dump);
+            
+            $storage->put(
+                $this->getDatabasePath($connection, $manifest),
+                $encrypted
+            );
+        }
+    }
+
+    private function backupFiles(Storage $storage, array $manifest): void
+    {
+        $paths = $this->getBackupPaths($manifest);
+        
+        foreach ($paths as $path) {
+            $files = $this->getFilesInPath($path);
+            
+            foreach ($files as $file) {
+                $content = file_get_contents($file);
+                $encrypted = $this->encryptData($content);
+                
+                $storage->put(
+                    $this->getFilePath($file, $manifest),
+                    $encrypted
+                );
+            }
+        }
+    }
+
+    private function generateBackupChecksums(Storage $storage, array &$manifest): void
+    {
+        $manifest['checksums'] = [];
+
+        foreach ($storage->allFiles() as $file) {
+            $manifest['checksums'][$file] = hash_file(
+                'sha256',
+                $storage->path($file)
+            );
+        }
+    }
+
+    private function encryptBackup(Storage $storage, array $manifest): void
+    {
+        foreach ($storage->allFiles() as $file) {
+            if ($file !== 'manifest.json') {
+                $content = $storage->get($file);
+                $encrypted = $this->encryptData($content);
+                $storage->put($file, $encrypted);
+            }
+        }
+    }
+
+    private function storeBackupManifest(Storage $storage, array $manifest): void
+    {
+        $storage->put(
+            'manifest.json',
+            json_encode($manifest, JSON_PRETTY_PRINT)
+        );
+    }
+
+    private function verifyBackupIntegrity(string $backupId): void
+    {
+        $result = $this->verify($backupId);
+        
+        if (!$result->valid) {
+            throw new BackupException('Backup integrity check failed');
+        }
+    }
+
+    private function verifyBackup(string $backupId): void
+    {
+        $storage = $this->initializeBackupStorage($backupId);
+        
+        if (!$storage->exists('manifest.json')) {
+            throw new BackupException('Invalid backup: missing manifest');
+        }
+    }
+
+    private function loadBackupManifest(string $backupId): array
+    {
+        $storage = $this->initializeBackupStorage($backupId);
+        $manifest = json_decode($storage->get('manifest.json'), true);
+        
+        if (json_last_error() !== JSON_ERROR_NONE) {
+            throw new BackupException('Invalid backup manifest');
+        }
+
+        return $manifest;
+    }
+
+    private function initializeRestoreStorage(string $backupId): Storage
+    {
+        return Storage::disk($this->config['restore_disk']);
+    }
+
+    private function createSystemSnapshot(): string
+    {
+        $snapshotId = uniqid('snapshot_', true);
+        
+        // Backup current database
+        $this->backupDatabase(
+            Storage::disk('snapshots'),
+            ['backup_id' => $snapshotId]
+        );
+
+        return $snapshotId;
+    }
+
+    private function decryptBackup(Storage $storage, array $manifest): void
+    {
+        foreach ($storage->allFiles() as $file) {
+            if ($file !== 'manifest.json') {
+                $content = $storage->get($file);
+                $decrypted = $this->decryptData($content, $manifest['encryption']);
+                $storage->put($file, $decrypted);
+            }
+        }
+    }
+
+    private function restoreDatabase(Storage $storage, array $manifest): void
+    {
+        foreach ($this->getDatabaseConnections() as $connection) {
+            $path = $this->getDatabasePath($connection, $manifest);
+            $dump = $storage->get($path);
+            
+            $this->restoreDatabaseDump($connection, $dump);
+        }
+    }
+
+    private function restoreFiles(Storage $storage, array $manifest): void
+    {
+        foreach ($manifest['checksums'] as $file => $checksum) {
+            if ($file !== 'manifest.json') {
+                $content = $storage->get($file);
+                $path = $this->getRestorePath($file, $manifest);
+                
+                file_put_contents($path, $content);
+            }
+        }
+    }
+
+    private function verifyRestoreIntegrity(array $manifest): void
+    {
+        // Verify database integrity
+        foreach ($this->getDatabaseConnections() as $connection) {
+            $this->verifyDatabaseIntegrity($connection);
+        }
+
+        // Verify file integrity
+        foreach ($manifest['checksums'] as $file => $checksum) {
+            if ($file !== 'manifest.json') {
+                $path = $this->getRestorePath($file, $manifest);
+                $restoredChecksum = hash_file('sha256', $path);
+                
+                if (!hash_equals($checksum, $restoredChecksum)) {
+                    throw new BackupException("File integrity check failed: {$file}");
+                }
+            }
+        }
+    }
+
+    private function rollbackToSnapshot(string $snapshotId): void
+    {
+        try {
+            $storage = Storage::disk('snapshots');
+            
+            foreach ($this->getDatabaseConnections() as $connection) {
+                $dump = $storage->get(
+                    $this->getDatabasePath($connection, ['backup_id' => $snapshotId])
+                );
+                
+                $this->restoreDatabaseDump($connection, $dump);
+            }
+        } catch (\Exception $e) {
+            $this->handleRollbackFailure($e, $snapshotId);
+            throw new BackupException('Rollback failed: ' . $e->getMessage());
+        }
+    }
+
+    private function handleBackupFailure(\Exception $e, ?string $backupId): void
+    {
+        if ($backupId) {
+            $this->cleanup($backupId);
+        }
+
+        $this->logFailure('backup', $e, $backupId);
+    }
+
+    private function handleRestoreFailure(\Exception $e, string $backupId): void
+    {
+        $this->logFailure('restore', $e, $backupId);
+    }
+
+    private function handleVerificationFailure(\Exception $e, string $backupId): void
+    {
+        $this->logFailure('verify', $e, $backupId);
+    }
+
+    private function handleRollbackFailure(\Exception $e, string $snapshotId): void
+    {
+        $this->logFailure('rollback', $e, $snapshotId);
+    }
+
+    private function cleanup(string $backupId): void
+    {
+        Storage::disk($this->config['backup_disk'])->deleteDirectory($backupId);
+    }
+
+    private function logFailure(string $operation, \Exception $e, ?string $id): void
+    {
+        $this->audit->logFailure($e, [
+            'operation' => "backup_{$operation}",
+            'id' => $id
+        ]);
+    }
+
+    private function logBackupSuccess(string $backupId, array $manifest): void
+    {
+        $this->audit->logSuccess('backup_create', [
+            'backup_id' => $backupId,
+            'manifest' => $manifest
+        ]);
+    }
+
+    private function logRestoreSuccess(string $backupId, array $manifest): void
+    {
+        $this->audit->logSuccess('backup_restore', [
+            'backup_id' => $backup

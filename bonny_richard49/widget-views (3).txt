@@ -1,0 +1,9 @@
+// resources/views/widgets/content.blade.php
+<div class="widget widget-content {{ $settings['wrapper_class'] ?? '' }}">
+    @if($settings['display_title'] ?? true)
+        <h3 class="widget-title">{{ $widget->name }}</h3>
+    @endif
+
+    <div class="widget-content">
+        @foreach($content as $item)
+            <div class="content-item

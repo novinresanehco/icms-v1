@@ -1,0 +1,104 @@
+// app/Core/Widget/Contracts/WidgetInterface.php
+<?php
+
+namespace App\Core\Widget\Contracts;
+
+interface WidgetInterface
+{
+    public function getIdentifier(): string;
+    public function getSettings(): array;
+    public function isActive(): bool;
+    public function getArea(): string;
+    public function render(): string;
+    public function shouldCache(): bool;
+    public function getCacheTtl(): ?int;
+    public function getPermissions(): array;
+    public function getVisibilityRules(): array;
+}
+
+// app/Core/Widget/Contracts/WidgetRepositoryInterface.php
+<?php
+
+namespace App\Core\Widget\Contracts;
+
+use App\Core\Widget\Models\Widget;
+use Illuminate\Support\Collection;
+
+interface WidgetRepositoryInterface
+{
+    public function find(int $id): ?Widget;
+    public function findByIdentifier(string $identifier): ?Widget;
+    public function findByArea(string $area): Collection;
+    public function create(array $data): Widget;
+    public function update(int $id, array $data): Widget;
+    public function delete(int $id): bool;
+    public function getActive(): Collection;
+    public function updateOrder(array $order): void;
+    public function updateVisibility(int $id, array $rules): void;
+}
+
+// app/Core/Widget/Contracts/WidgetCacheInterface.php
+<?php
+
+namespace App\Core\Widget\Contracts;
+
+use App\Core\Widget\Models\Widget;
+
+interface WidgetCacheInterface
+{
+    public function get(Widget $widget, string $key);
+    public function put(Widget $widget, string $key, $value, ?int $ttl = null): void;
+    public function forget(Widget $widget, string $key): void;
+    public function flush(Widget $widget): void;
+    public function getTags(Widget $widget): array;
+}
+
+// app/Core/Widget/Contracts/WidgetMetricsInterface.php
+<?php
+
+namespace App\Core\Widget\Contracts;
+
+use App\Core\Widget\Models\Widget;
+use Carbon\Carbon;
+
+interface WidgetMetricsInterface
+{
+    public function recordMetrics(Widget $widget, array $metrics): void;
+    public function getMetrics(Widget $widget, Carbon $start, Carbon $end): array;
+    public function aggregateMetrics(Widget $widget, string $period): array;
+    public function clearMetrics(Widget $widget): void;
+}
+
+// app/Core/Widget/Contracts/WidgetValidatorInterface.php
+<?php
+
+namespace App\Core\Widget\Contracts;
+
+interface WidgetValidatorInterface
+{
+    public function validate(array $data): array;
+    public function validateSettings(array $settings): array;
+    public function validateVisibilityRules(array $rules): array;
+}
+
+// app/Core/Widget/Contracts/WidgetFactoryInterface.php
+<?php
+
+namespace App\Core\Widget\Contracts;
+
+use App\Core\Widget\Models\Widget;
+
+interface WidgetFactoryInterface
+{
+    public function create(string $type, array $attributes = []): Widget;
+    public function createFromDTO(WidgetDTO $dto): Widget;
+    public function getAvailableTypes(): array;
+    public function registerType(string $type, string $class): void;
+}
+
+// app/Core/Widget/Contracts/WidgetRenderInterface.php
+<?php
+
+namespace App\Core\Widget\Contracts;
+
+use App

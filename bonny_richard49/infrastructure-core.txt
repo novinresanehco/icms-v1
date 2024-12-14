@@ -1,0 +1,79 @@
+<?php
+namespace App\Core\Infrastructure;
+
+class SystemManager implements SystemManagerInterface
+{
+    private MonitoringService $monitor;
+    private SecurityManager $security;
+    private CacheManager $cache;
+
+    public function handleRequest(Request $request): Response
+    {
+        return $this->security->executeCriticalOperation(
+            new RequestOperation($request, $this->monitor)
+        );
+    }
+
+    public function optimize(): void
+    {
+        $this->cache->optimize();
+        $this->monitor->collectMetrics();
+        $this->security->verifySystemState();
+    }
+
+    public function monitor(): SystemStatus
+    {
+        $metrics = $this->monitor->collectMetrics();
+        $this->verifySystemHealth($metrics);
+        return new SystemStatus($metrics);
+    }
+
+    private function verifySystemHealth(array $metrics): void
+    {
+        if (!$this->monitor->verifyMetrics($metrics)) {
+            throw new SystemHealthException('Critical system metrics violation');
+        }
+    }
+}
+
+class MonitoringService implements MonitoringInterface
+{
+    private MetricsCollector $metrics;
+    private AlertService $alerts;
+    private Logger $logger;
+
+    public function collectMetrics(): array
+    {
+        $metrics = [
+            'memory' => $this->metrics->collectMemoryMetrics(),
+            'cpu' => $this->metrics->collectCpuMetrics(),
+            'requests' => $this->metrics->collectRequestMetrics(),
+            'cache' => $this->metrics->collectCacheMetrics()
+        ];
+
+        $this->verifyMetrics($metrics);
+        return $metrics;
+    }
+
+    public function verifyMetrics(array $metrics): bool
+    {
+        foreach ($metrics as $key => $value) {
+            if (!$this->isMetricValid($key, $value)) {
+                $this->alerts->critical("Metric violation: $key");
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private function isMetricValid(string $key, $value): bool
+    {
+        return match($key) {
+            'memory' => $value < 80,
+            'cpu' => $value < 70,
+            'requests' => $value < 1000,
+            'cache' => $value > 80,
+            default => true
+        };
+    }
+}

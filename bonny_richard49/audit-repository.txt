@@ -1,0 +1,201 @@
+<?php
+
+namespace App\Core\Audit\Repositories;
+
+class AuditRepository
+{
+    protected Connection $db;
+    protected Cache $cache;
+    protected SearchEngine $search;
+
+    public function __construct(
+        Connection $db,
+        Cache $cache,
+        SearchEngine $search
+    ) {
+        $this->db = $db;
+        $this->cache = $cache;
+        $this->search = $search;
+    }
+
+    public function save(AuditEntry $entry): void
+    {
+        $this->db->table('audit_log')->insert($entry->toArray());
+        $this->search->index('audit', $entry->getId(), $entry->toArray());
+        $this->clearCache($entry->getEntityType(), $entry->getEntityId());
+    }
+
+    public function saveBatch(array $entries): void
+    {
+        $this->db->transaction(function () use ($entries) {
+            foreach (array_chunk($entries, 100) as $chunk) {
+                $this->db->table('audit_log')->insert(
+                    array_map(fn($entry) => $entry->toArray(), $chunk)
+                );
+            }
+        });
+
+        // Bulk index in search
+        $this->search->bulkIndex('audit', array_map(function ($entry) {
+            return [
+                'id' => $entry->getId(),
+                'body' => $entry->toArray()
+            ];
+        }, $entries));
+
+        // Clear relevant caches
+        $this->clearBatchCache($entries);
+    }
+
+    public function getAuditLog(array $filters = []): Collection
+    {
+        $query = $this->db->table('audit_log')
+            ->select('*')
+            ->orderBy('timestamp', 'desc');
+
+        foreach ($filters as $field => $value) {
+            if (is_array($value)) {
+                $query->whereIn($field, $value);
+            } else {
+                $query->where($field, $value);
+            }
+        }
+
+        if (isset($filters['date_from'])) {
+            $query->where('timestamp', '>=', $filters['date_from']);
+        }
+
+        if (isset($filters['date_to'])) {
+            $query->where('timestamp', '<=', $filters['date_to']);
+        }
+
+        return $query->get();
+    }
+
+    public function getEntityHistory(string $entity, string $entityId): Collection
+    {
+        $cacheKey = "audit:entity:{$entity}:{$entityId}";
+
+        return $this->cache->remember($cacheKey, 3600, function () use ($entity, $entityId) {
+            return $this->db->table('audit_log')
+                ->where('entity_type', $entity)
+                ->where('entity_id', $entityId)
+                ->orderBy('timestamp', 'desc')
+                ->get();
+        });
+    }
+
+    public function search(array $criteria): Collection
+    {
+        $query = [
+            'bool' => [
+                'must' => [],
+                'filter' => []
+            ]
+        ];
+
+        if (isset($criteria['text'])) {
+            $query['bool']['must'][] = [
+                'multi_match' => [
+                    'query' => $criteria['text'],
+                    'fields' => ['action^2', 'entity_type', 'data.*']
+                ]
+            ];
+        }
+
+        if (isset($criteria['date_range'])) {
+            $query['bool']['filter'][] = [
+                'range' => [
+                    'timestamp' => [
+                        'gte' => $criteria['date_range']['from'],
+                        'lte' => $criteria['date_range']['to']
+                    ]
+                ]
+            ];
+        }
+
+        $results = $this->search->search('audit', [
+            'query' => $query,
+            'sort' => ['timestamp' => 'desc'],
+            'size' => $criteria['size'] ?? 50
+        ]);
+
+        return collect($results['hits']['hits'])->map(function ($hit) {
+            return $hit['_source'];
+        });
+    }
+
+    protected function clearCache(string $entityType, ?string $entityId): void
+    {
+        if ($entityId) {
+            $this->cache->forget("audit:entity:{$entityType}:{$entityId}");
+        }
+    }
+
+    protected function clearBatchCache(array $entries): void
+    {
+        $cacheKeys = collect($entries)
+            ->filter(fn($entry) => $entry->getEntityId() !== null)
+            ->map(fn($entry) => "audit:entity:{$entry->getEntityType()}:{$entry->getEntityId()}")
+            ->unique()
+            ->values()
+            ->all();
+
+        if (!empty($cacheKeys)) {
+            $this->cache->deleteMultiple($cacheKeys);
+        }
+    }
+}
+
+namespace App\Core\Audit\Search;
+
+class SearchEngine
+{
+    protected Client $client;
+    protected string $indexPrefix;
+
+    public function __construct(Client $client, string $indexPrefix = 'app_')
+    {
+        $this->client = $client;
+        $this->indexPrefix = $indexPrefix;
+    }
+
+    public function index(string $type, string $id, array $body): void
+    {
+        $this->client->index([
+            'index' => $this->getIndexName($type),
+            'id' => $id,
+            'body' => $body
+        ]);
+    }
+
+    public function bulkIndex(string $type, array $documents): void
+    {
+        $params = ['body' => []];
+
+        foreach ($documents as $document) {
+            $params['body'][] = [
+                'index' => [
+                    '_index' => $this->getIndexName($type),
+                    '_id' => $document['id']
+                ]
+            ];
+
+            $params['body'][] = $document['body'];
+        }
+
+        $this->client->bulk($params);
+    }
+
+    public function search(string $type, array $params): array
+    {
+        return $this->client->search(array_merge(
+            ['index' => $this->getIndexName($type)],
+            $params
+        ));
+    }
+
+    protected function getIndexName(string $type): string
+    {
+        return $this->indexPrefix . $type;
+    }

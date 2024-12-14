@@ -1,0 +1,36 @@
+// resources/views/widgets/types/content.blade.php
+<div class="widget-content {{ $widget->type }}-widget" data-widget-id="{{ $widget->id }}">
+    @if($settings['show_title'] ?? true)
+        <div class="widget-title">
+            <h3>{{ $widget->name }}</h3>
+        </div>
+    @endif
+
+    <div class="widget-body">
+        {!! $content ?? '' !!}
+    </div>
+
+    @if($settings['show_footer'] ?? false)
+        <div class="widget-footer">
+            <div class="widget-meta">{{ $metadata['footer_text'] ?? '' }}</div>
+        </div>
+    @endif
+</div>
+
+// resources/views/widgets/types/menu.blade.php
+<nav class="widget-menu {{ $widget->type }}-widget" data-widget-id="{{ $widget->id }}">
+    @if($settings['show_title'] ?? true)
+        <div class="widget-title">
+            <h3>{{ $widget->name }}</h3>
+        </div>
+    @endif
+
+    <ul class="menu-items">
+        @foreach($items ?? [] as $item)
+            <li class="menu-item {{ $item['active'] ? 'active' : '' }}">
+                <a href="{{ $item['url'] }}" 
+                   class="menu-link"
+                   @if($settings['new_tab'] ?? false) target="_blank" @endif>
+                    {{ $item['title'] }}
+                </a>
+                @if(($settings['show_description'] ??

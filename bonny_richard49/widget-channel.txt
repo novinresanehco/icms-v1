@@ -1,0 +1,115 @@
+// app/Core/Widget/Broadcasting/WidgetChannel.php
+<?php
+
+namespace App\Core\Widget\Broadcasting;
+
+use App\Core\Widget\Models\Widget;
+use Illuminate\Support\Facades\Auth;
+
+class WidgetChannel
+{
+    public function join(Widget $widget)
+    {
+        return Auth::check() && $widget->isVisibleTo(Auth::user());
+    }
+}
+
+// app/Core/Widget/Broadcasting/WidgetEventChannel.php
+<?php
+
+namespace App\Core\Widget\Broadcasting;
+
+use App\Core\Widget\Models\Widget;
+use Illuminate\Support\Facades\Auth;
+
+class WidgetEventChannel
+{
+    public function join(Widget $widget)
+    {
+        return Auth::check() && Auth::user()->can('manage_widgets');
+    }
+}
+
+// app/Core/Widget/Broadcasting/WidgetMetricsChannel.php
+<?php
+
+namespace App\Core\Widget\Broadcasting;
+
+use App\Core\Widget\Models\Widget;
+use Illuminate\Support\Facades\Auth;
+
+class WidgetMetricsChannel
+{
+    public function join(Widget $widget)
+    {
+        return Auth::check() && Auth::user()->can('view_widget_metrics');
+    }
+}
+
+// app/Core/Widget/Broadcasting/WidgetAdminChannel.php
+<?php
+
+namespace App\Core\Widget\Broadcasting;
+
+use Illuminate\Support\Facades\Auth;
+
+class WidgetAdminChannel
+{
+    public function join()
+    {
+        return Auth::check() && Auth::user()->can('manage_widgets');
+    }
+}
+
+// app/Core/Widget/Events/Broadcast/WidgetStateChanged.php
+<?php
+
+namespace App\Core\Widget\Events\Broadcast;
+
+use App\Core\Widget\Models\Widget;
+use Illuminate\Broadcasting\Channel;
+use Illuminate\Broadcasting\InteractsWithSockets;
+use Illuminate\Broadcasting\PresenceChannel;
+use Illuminate\Contracts\Broadcasting\ShouldBroadcast;
+use Illuminate\Foundation\Events\Dispatchable;
+use Illuminate\Queue\SerializesModels;
+
+class WidgetStateChanged implements ShouldBroadcast
+{
+    use Dispatchable, InteractsWithSockets, SerializesModels;
+
+    public function __construct(
+        public Widget $widget,
+        public string $action,
+        public array $changes = []
+    ) {}
+
+    public function broadcastOn()
+    {
+        return [
+            new PresenceChannel("widget.{$this->widget->id}"),
+            new PresenceChannel('widget.admin')
+        ];
+    }
+
+    public function broadcastWith()
+    {
+        return [
+            'widget_id' => $this->widget->id,
+            'action' => $this->action,
+            'changes' => $this->changes,
+            'timestamp' => now()->toIso8601String()
+        ];
+    }
+}
+
+// app/Core/Widget/Events/Broadcast/WidgetMetricsUpdated.php
+<?php
+
+namespace App\Core\Widget\Events\Broadcast;
+
+use App\Core\Widget\Models\Widget;
+use Illuminate\Broadcasting\Channel;
+use Illuminate\Broadcasting\InteractsWithSockets;
+use Illuminate\Broadcasting\PresenceChannel;
+use Illuminate\Contracts\Broadcasting\ShouldBroadcast;

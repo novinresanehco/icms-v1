@@ -1,0 +1,75 @@
+// build/widget-profile.pubxml
+<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+    <PropertyGroup>
+        <WebPublishMethod>FileSystem</WebPublishMethod>
+        <LastUsedBuildConfiguration>Release</LastUsedBuildConfiguration>
+        <LastUsedPlatform>Any CPU</LastUsedPlatform>
+        <SiteUrlToLaunchAfterPublish />
+        <LaunchSiteAfterPublish>True</LaunchSiteAfterPublish>
+        <ExcludeApp_Data>False</ExcludeApp_Data>
+        <publishUrl>bin\Release\Publish</publishUrl>
+        <DeleteExistingFiles>False</DeleteExistingFiles>
+    </PropertyGroup>
+</Project>
+
+// build/widget-profile.pubxml.user
+<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+    <PropertyGroup>
+        <TimeStampOfAssociatedLegacyPublishXmlFile />
+        <_PublishTargetUrl>bin\Release\Publish</_PublishTargetUrl>
+    </PropertyGroup>
+</Project>
+
+// build/deploy.sh
+#!/bin/bash
+
+# Widget deployment script
+echo "Starting widget deployment..."
+
+# Build assets
+npm run build
+
+# Run migrations
+php artisan migrate --force
+
+# Clear caches
+php artisan cache:clear
+php artisan config:clear
+php artisan view:clear
+
+# Optimize
+php artisan optimize
+
+echo "Deployment complete!"
+
+// build/widget-ci.yml
+name: Widget CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v2
+    
+    - name: Setup PHP
+      uses: shivammathur/setup-php@v2
+      with:
+        php-version: '8.1'
+    
+    - name: Install Dependencies
+      run: composer install -q --no-ansi --no-interaction --no-scripts --no-progress --prefer-dist
+    
+    - name: Execute tests
+      run: vendor/bin/phpunit tests/Widget
+      
+    - name: Static Analysis
+      run: vendor/bin/phpstan analyse src tests

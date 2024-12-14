@@ -1,0 +1,122 @@
+<?php
+
+namespace App\Core\Auth;
+
+class CryptoService {
+    private string $cipher = 'aes-256-gcm';
+    private string $hashAlgo = 'argon2id';
+
+    public function hashPassword(string $password): string 
+    {
+        $options = [
+            'memory_cost' => 65536,  // 64MB
+            'time_cost' => 4,        // 4 iterations
+            'threads' => 3           // 3 threads
+        ];
+
+        return password_hash($password, PASSWORD_ARGON2ID, $options);
+    }
+
+    public function verifyPassword(string $password, string $hash): bool 
+    {
+        if (empty($password) || empty($hash)) {
+            throw new ValidationException('Invalid password verification input');
+        }
+
+        return password_verify($password, $hash);
+    }
+
+    public function generateMfaSecret(): string 
+    {
+        return bin2hex(random_bytes(20));
+    }
+
+    public function verifyMfaCode(string $code, string $secret): bool 
+    {
+        // Time-based verification
+        $timeSlice = floor(time() / 30);
+        
+        // Check current and previous time slice
+        for ($i = -1; $i <= 1; $i++) {
+            if ($this->generateMfaCode($secret, $timeSlice + $i) === $code) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    public function signToken(array $payload): string 
+    {
+        // Add security claims
+        $payload['iat'] = time();
+        $payload['jti'] = bin2hex(random_bytes(16));
+
+        // Sign payload
+        $key = $this->getSigningKey();
+        
+        $header = base64_encode(json_encode([
+            'alg' => 'HS256',
+            'typ' => 'JWT'
+        ]));
+        
+        $payload = base64_encode(json_encode($payload));
+        
+        $signature = hash_hmac(
+            'sha256',
+            "{$header}.{$payload}",
+            $key,
+            true
+        );
+
+        return "{$header}.{$payload}." . base64_encode($signature);
+    }
+
+    public function verifyToken(string $token): array 
+    {
+        $parts = explode('.', $token);
+        if (count($parts) !== 3) {
+            throw new TokenInvalidException('Malformed token');
+        }
+
+        [$header, $payload, $signature] = $parts;
+
+        // Verify signature
+        $key = $this->getSigningKey();
+        $valid = hash_equals(
+            base64_encode(hash_hmac('sha256', "{$header}.{$payload}", $key, true)),
+            $signature
+        );
+
+        if (!$valid) {
+            throw new TokenInvalidException('Invalid token signature');
+        }
+
+        $payload = json_decode(base64_decode($payload), true);
+
+        // Verify claims
+        if (!isset($payload['iat'], $payload['jti'])) {
+            throw new TokenInvalidException('Missing required claims');
+        }
+
+        return $payload;
+    }
+
+    private function generateMfaCode(string $secret, int $timeSlice): string 
+    {
+        $secretKey = $this->base32Decode($secret);
+        
+        // Pack time into binary string
+        $time = pack('N*', $timeSlice);
+        
+        // Generate HMAC-SHA1 value
+        $hash = hash_hmac('sha1', $time, $secretKey, true);
+        
+        // Take the last byte
+        $offset = ord($hash[19]) & 0xf;
+        
+        // Generate 4-byte code
+        $code = (
+            ((ord($hash[$offset+0]) & 0x7f) << 24) |
+            ((ord($hash[$offset+1]) & 0xff) << 16) |
+            

@@ -1,0 +1,116 @@
+// resources/views/admin/widgets/index.blade.php
+@extends('admin.layouts.app')
+
+@section('content')
+<div class="container mx-auto px-4 sm:px-6 lg:px-8">
+    <div class="flex justify-between items-center py-6">
+        <h1 class="text-2xl font-semibold text-gray-900">Widgets</h1>
+        <a href="{{ route('admin.widgets.create') }}" class="btn-primary">
+            Create Widget
+        </a>
+    </div>
+
+    <div class="bg-white shadow overflow-hidden sm:rounded-md">
+        <ul class="divide-y divide-gray-200">
+            @foreach($widgets as $widget)
+                <li class="px-4 py-4 sm:px-6">
+                    <div class="flex items-center justify-between">
+                        <div class="flex items-center">
+                            <div class="ml-3">
+                                <h3 class="text-lg leading-6 font-medium text-gray-900">
+                                    {{ $widget->name }}
+                                </h3>
+                                <p class="text-sm text-gray-500">
+                                    {{ $widget->identifier }} - {{ $widget->type }}
+                                </p>
+                            </div>
+                        </div>
+                        <div class="flex space-x-2">
+                            <a href="{{ route('admin.widgets.edit', $widget->id) }}" 
+                               class="btn-secondary">Edit</a>
+                            <form action="{{ route('admin.widgets.destroy', $widget->id) }}" 
+                                  method="POST" 
+                                  class="inline">
+                                @csrf
+                                @method('DELETE')
+                                <button type="submit" 
+                                        class="btn-danger" 
+                                        onclick="return confirm('Are you sure?')">
+                                    Delete
+                                </button>
+                            </form>
+                        </div>
+                    </div>
+                </li>
+            @endforeach
+        </ul>
+    </div>
+</div>
+@endsection
+
+// resources/views/admin/widgets/create.blade.php
+@extends('admin.layouts.app')
+
+@section('content')
+<div class="container mx-auto px-4 sm:px-6 lg:px-8">
+    <div class="max-w-3xl mx-auto">
+        <div class="bg-white shadow sm:rounded-lg">
+            <form action="{{ route('admin.widgets.store') }}" method="POST">
+                @csrf
+                <div class="shadow sm:rounded-md sm:overflow-hidden">
+                    <div class="px-4 py-5 bg-white space-y-6 sm:p-6">
+                        <div>
+                            <label for="name" class="block text-sm font-medium text-gray-700">
+                                Widget Name
+                            </label>
+                            <input type="text" 
+                                   name="name" 
+                                   id="name" 
+                                   class="mt-1 focus:ring-indigo-500 focus:border-indigo-500 block w-full shadow-sm sm:text-sm border-gray-300 rounded-md" 
+                                   value="{{ old('name') }}">
+                            @error('name')
+                                <p class="mt-2 text-sm text-red-600">{{ $message }}</p>
+                            @enderror
+                        </div>
+
+                        <div>
+                            <label for="identifier" class="block text-sm font-medium text-gray-700">
+                                Identifier
+                            </label>
+                            <input type="text" 
+                                   name="identifier" 
+                                   id="identifier" 
+                                   class="mt-1 focus:ring-indigo-500 focus:border-indigo-500 block w-full shadow-sm sm:text-sm border-gray-300 rounded-md" 
+                                   value="{{ old('identifier') }}">
+                            @error('identifier')
+                                <p class="mt-2 text-sm text-red-600">{{ $message }}</p>
+                            @enderror
+                        </div>
+
+                        <div>
+                            <label for="type" class="block text-sm font-medium text-gray-700">
+                                Type
+                            </label>
+                            <select name="type" 
+                                    id="type" 
+                                    class="mt-1 block w-full py-2 px-3 border border-gray-300 bg-white rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm">
+                                <option value="content">Content</option>
+                                <option value="menu">Menu</option>
+                                <option value="social">Social</option>
+                                <option value="custom">Custom</option>
+                            </select>
+                            @error('type')
+                                <p class="mt-2 text-sm text-red-600">{{ $message }}</p>
+                            @enderror
+                        </div>
+
+                        <div>
+                            <label for="area" class="block text-sm font-medium text-gray-700">
+                                Area
+                            </label>
+                            <select name="area" 
+                                    id="area" 
+                                    class="mt-1 block w-full py-2 px-3 border border-gray-300 bg-white rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm">
+                                <option value="sidebar">Sidebar</option>
+                                <option value="footer">Footer</option>
+                

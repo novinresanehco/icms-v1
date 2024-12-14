@@ -1,0 +1,85 @@
+<?php
+
+namespace App\Core\Notification\Analytics\Observer;
+
+use App\Core\Notification\Analytics\Events\AnalyticsEvent;
+
+class AnalyticsObserver
+{
+    private array $listeners = [];
+    private array $metrics = [];
+    private array $thresholds;
+    private array $config;
+
+    public function __construct(array $config = [])
+    {
+        $this->config = $config;
+        $this->thresholds = $config['thresholds'] ?? [];
+    }
+
+    public function addListener(string $event, callable $listener): void
+    {
+        if (!isset($this->listeners[$event])) {
+            $this->listeners[$event] = [];
+        }
+        $this->listeners[$event][] = $listener;
+    }
+
+    public function notify(AnalyticsEvent $event): void
+    {
+        $eventName = get_class($event);
+        
+        if (isset($this->listeners[$eventName])) {
+            foreach ($this->listeners[$eventName] as $listener) {
+                $listener($event);
+            }
+        }
+
+        $this->recordMetrics($event);
+        $this->checkThresholds($event);
+    }
+
+    public function getMetrics(): array
+    {
+        return $this->metrics;
+    }
+
+    private function recordMetrics(AnalyticsEvent $event): void
+    {
+        $metricName = $this->getMetricName($event);
+        $value = $this->extractMetricValue($event);
+
+        if (!isset($this->metrics[$metricName])) {
+            $this->metrics[$metricName] = [];
+        }
+
+        $this->metrics[$metricName][] = [
+            'value' => $value,
+            'timestamp' => time(),
+            'context' => $this->extractContext($event)
+        ];
+    }
+
+    private function checkThresholds(AnalyticsEvent $event): void
+    {
+        $metricName = $this->getMetricName($event);
+        
+        if (!isset($this->thresholds[$metricName])) {
+            return;
+        }
+
+        $value = $this->extractMetricValue($event);
+        $threshold = $this->thresholds[$metricName];
+
+        if ($value > $threshold['value']) {
+            $this->handleThresholdExceeded($metricName, $value, $threshold, $event);
+        }
+    }
+
+    private function getMetricName(AnalyticsEvent $event): string
+    {
+        $parts = explode('\\', get_class($event));
+        return strtolower(end($parts));
+    }
+
+    private function extractMetricValue(AnalyticsEvent $

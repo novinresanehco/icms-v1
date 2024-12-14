@@ -1,0 +1,233 @@
+// app/Core/Widget/Reports/WidgetReportGenerator.php
+<?php
+
+namespace App\Core\Widget\Reports;
+
+use App\Core\Widget\Models\Widget;
+use App\Core\Widget\Analytics\WidgetAnalytics;
+use Carbon\Carbon;
+
+class WidgetReportGenerator
+{
+    public function __construct(
+        private WidgetAnalytics $analytics
+    ) {}
+
+    public function generateReport(
+        Widget $widget,
+        string $type,
+        Carbon $start,
+        Carbon $end
+    ): array {
+        return match($type) {
+            'performance' => $this->generatePerformanceReport($widget, $start, $end),
+            'usage' => $this->generateUsageReport($widget, $start, $end),
+            'interaction' => $this->generateInteractionReport($widget, $start, $end),
+            'comprehensive' => $this->generateComprehensiveReport($widget, $start, $end),
+            default => throw new \InvalidArgumentException("Unknown report type: {$type}")
+        };
+    }
+
+    protected function generatePerformanceReport(Widget $widget, Carbon $start, Carbon $end): array
+    {
+        return [
+            'type' => 'performance',
+            'period' => [
+                'start' => $start->toIso8601String(),
+                'end' => $end->toIso8601String()
+            ],
+            'metrics' => $this->analytics->getPerformanceMetrics($widget, $start, $end),
+            'generated_at' => now()->toIso8601String()
+        ];
+    }
+
+    protected function generateUsageReport(Widget $widget, Carbon $start, Carbon $end): array
+    {
+        return [
+            'type' => 'usage',
+            'period' => [
+                'start' => $start->toIso8601String(),
+                'end' => $end->toIso8601String()
+            ],
+            'metrics' => $this->analytics->getViewMetrics($widget, $start, $end),
+            'generated_at' => now()->toIso8601String()
+        ];
+    }
+
+    protected function generateInteractionReport(Widget $widget, Carbon $start, Carbon $end): array
+    {
+        return [
+            'type' => 'interaction',
+            'period' => [
+                'start' => $start->toIso8601String(),
+                'end' => $end->toIso8601String()
+            ],
+            'metrics' => $this->analytics->getInteractionMetrics($widget, $start, $end),
+            'generated_at' => now()->toIso8601String()
+        ];
+    }
+
+    protected function generateComprehensiveReport(Widget $widget, Carbon $start, Carbon $end): array
+    {
+        return [
+            'type' => 'comprehensive',
+            'period' => [
+                'start' => $start->toIso8601String(),
+                'end' => $end->toIso8601String()
+            ],
+            'performance' => $this->analytics->getPerformanceMetrics($widget, $start, $end),
+            'usage' => $this->analytics->getViewMetrics($widget, $start, $end),
+            'interaction' => $this->analytics->getInteractionMetrics($widget, $start, $end),
+            'generated_at' => now()->toIso8601String()
+        ];
+    }
+}
+
+// app/Core/Widget/Reports/WidgetReportExporter.php
+<?php
+
+namespace App\Core\Widget\Reports;
+
+use App\Core\Widget\Models\Widget;
+use Illuminate\Support\Facades\Storage;
+
+class WidgetReportExporter
+{
+    public function exportReport(array $report, string $format = 'json'): string
+    {
+        return match($format) {
+            'json' => $this->exportToJson($report),
+            'csv' => $this->exportToCsv($report),
+            'pdf' => $this->exportToPdf($report),
+            default => throw new \InvalidArgumentException("Unsupported format: {$format}")
+        };
+    }
+
+    public function saveReport(string $content, string $filename): string
+    {
+        $path = 'reports/widgets/' . date('Y/m/d/') . $filename;
+        Storage::put($path, $content);
+        return $path;
+    }
+
+    protected function exportToJson(array $report): string
+    {
+        return json_encode($report, JSON_PRETTY_PRINT);
+    }
+
+    protected function exportToCsv(array $report): string
+    {
+        $output = fopen('php://temp', 'r+');
+        
+        // Write headers
+        fputcsv($output, array_keys($report));
+        
+        // Write data
+        $this->writeCsvData($output, $report);
+        
+        rewind($output);
+        $content = stream_get_contents($output);
+        fclose($output);
+        
+        return $content;
+    }
+
+    protected function exportToPdf(array $report): string
+    {
+        // Implementation depends on PDF library of choice
+        throw new \RuntimeException('PDF export not implemented');
+    }
+
+    protected function writeCsvData($handle, array $data, string $prefix = ''): void
+    {
+        foreach ($data as $key => $value) {
+            $fullKey = $prefix ? "{$prefix}.{$key}" : $key;
+            
+            if (is_array($value)) {
+                $this->writeCsvData($handle, $value, $fullKey);
+            } else {
+                fputcsv($handle, [$fullKey, $value]);
+            }
+        }
+    }
+}
+
+// app/Core/Widget/Reports/Types/PerformanceReport.php
+<?php
+
+namespace App\Core\Widget\Reports\Types;
+
+use App\Core\Widget\Models\Widget;
+use Carbon\Carbon;
+
+class PerformanceReport
+{
+    public function generate(Widget $widget, Carbon $start, Carbon $end): array
+    {
+        $metrics = $this->collectMetrics($widget, $start, $end);
+        
+        return [
+            'average_load_time' => $this->calculateAverageLoadTime($metrics),
+            'peak_load_time' => $this->calculatePeakLoadTime($metrics),
+            'error_rate' => $this->calculateErrorRate($metrics),
+            'cache_performance' => $this->analyzeCachePerformance($metrics),
+            'resource_usage' => $this->analyzeResourceUsage($metrics),
+            'optimizations' => $this->suggestOptimizations($metrics)
+        ];
+    }
+
+    protected function collectMetrics(Widget $widget, Carbon $start, Carbon $end): array
+    {
+        return $widget->performance()
+            ->whereBetween('recorded_at', [$start, $end])
+            ->get()
+            ->toArray();
+    }
+
+    protected function calculateAverageLoadTime(array $metrics): float
+    {
+        if (empty($metrics)) {
+            return 0.0;
+        }
+
+        $totalLoadTime = array_sum(array_column($metrics, 'load_time'));
+        return $totalLoadTime / count($metrics);
+    }
+
+    protected function calculatePeakLoadTime(array $metrics): float
+    {
+        if (empty($metrics)) {
+            return 0.0;
+        }
+
+        return max(array_column($metrics, 'load_time'));
+    }
+
+    protected function calculateErrorRate(array $metrics): float
+    {
+        if (empty($metrics)) {
+            return 0.0;
+        }
+
+        $errorCount = count(array_filter($metrics, fn($m) => $m['has_error']));
+        return ($errorCount / count($metrics)) * 100;
+    }
+
+    protected function analyzeCachePerformance(array $metrics): array
+    {
+        // Implementation
+        return [];
+    }
+
+    protected function analyzeResourceUsage(array $metrics): array
+    {
+        // Implementation
+        return [];
+    }
+
+    protected function suggestOptimizations(array $metrics): array
+    {
+        // Implementation
+        return [];
+    }
+}

@@ -1,0 +1,134 @@
+<?php
+
+namespace App\Services;
+
+use App\Core\Services\BaseService;
+use App\Core\Security\SecurityManager;
+use App\Core\Validation\ValidationService;
+use App\Core\Logging\AuditLogger;
+use App\Core\Events\EventDispatcher;
+use App\Repositories\ContentRepository;
+
+class ContentService extends BaseService
+{
+    protected ContentRepository $contentRepository;
+    
+    public function __construct(
+        ContentRepository $repository,
+        SecurityManager $security,
+        ValidationService $validator,
+        AuditLogger $auditLogger,
+        EventDispatcher $events
+    ) {
+        parent::__construct($repository, $security, $validator, $auditLogger, $events);
+        $this->contentRepository = $repository;
+    }
+
+    public function createContent(array $data): Content
+    {
+        return $this->executeOperation('content.create', function() use ($data) {
+            return $this->contentRepository->create($data);
+        });
+    }
+
+    public function updateContent(int $id, array $data): Content
+    {
+        return $this->executeOperation('content.update', function() use ($id, $data) {
+            return $this->contentRepository->update($id, $data);
+        });
+    }
+
+    public function deleteContent(int $id): bool
+    {
+        return $this->executeOperation('content.delete', function() use ($id) {
+            return $this->contentRepository->delete($id);
+        });
+    }
+
+    public function publishContent(int $id): bool
+    {
+        return $this->executeOperation('content.publish', function() use ($id) {
+            $content = $this->contentRepository->find($id);
+            
+            if (!$content->isReadyForPublishing()) {
+                throw new ContentException('Content not ready for publishing');
+            }
+
+            $content->publish();
+            $this->events->dispatch('content.published', $content);
+
+            return true;
+        });
+    }
+
+    public function versionContent(int $id): ContentVersion
+    {
+        return $this->executeOperation('content.version', function() use ($id) {
+            $content = $this->contentRepository->find($id);
+            return $content->createVersion();
+        });
+    }
+
+    public function restoreVersion(int $contentId, int $versionId): Content
+    {
+        return $this->executeOperation('content.restore_version', function() use ($contentId, $versionId) {
+            $content = $this->contentRepository->find($contentId);
+            return $content->restoreVersion($versionId);
+        });
+    }
+
+    public function validateContent(array $data): bool
+    {
+        return $this->validator->validate($data, [
+            'title' => 'required|string|max:255',
+            'body' => 'required|string',
+            'status' => 'required|in:draft,review,published',
+            'author_id' => 'required|exists:users,id',
+            'category_id' => 'required|exists:categories,id',
+            'tags' => 'array',
+            'tags.*' => 'exists:tags,id',
+            'publish_at' => 'nullable|date|after:now',
+            'meta_description' => 'nullable|string|max:160',
+            'meta_keywords' => 'nullable|string|max:255'
+        ]);
+    }
+
+    public function searchContent(array $criteria): Collection
+    {
+        return $this->executeOperation('content.search', function() use ($criteria) {
+            return $this->contentRepository->search($criteria);
+        });
+    }
+
+    public function getContentStats(): array
+    {
+        return $this->executeOperation('content.stats', function() {
+            return [
+                'total' => $this->contentRepository->count(),
+                'published' => $this->contentRepository->countPublished(),
+                'pending' => $this->contentRepository->countPending(),
+                'drafts' => $this->contentRepository->countDrafts()
+            ];
+        });
+    }
+
+    protected function validateResult($result): void
+    {
+        parent::validateResult($result);
+
+        if ($result instanceof Content) {
+            $this->validateContentResult($result);
+        }
+    }
+
+    protected function validateContentResult(Content $content): void
+    {
+        if (!$content->isValid()) {
+            throw new ContentException('Invalid content state');
+        }
+
+        if ($content->isPublished() && !$content->hasRequiredFields()) {
+            throw new ContentException('Published content missing required fields');
+        }
+    }
+}

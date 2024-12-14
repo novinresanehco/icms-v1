@@ -1,0 +1,122 @@
+// app/Core/Widget/View/Components/Widget.php
+<?php
+
+namespace App\Core\Widget\View\Components;
+
+use App\Core\Widget\Models\Widget as WidgetModel;
+use App\Core\Widget\Services\WidgetService;
+use Illuminate\View\Component;
+
+class Widget extends Component
+{
+    public WidgetModel $widget;
+    public array $settings;
+    public string $content;
+
+    public function __construct(
+        private WidgetService $widgetService,
+        string $identifier
+    ) {
+        $this->widget = $this->widgetService->getWidgetByIdentifier($identifier);
+        $this->settings = $this->widget->settings ?? [];
+        $this->content = $this->widgetService->renderWidget($this->widget);
+    }
+
+    public function render(): string
+    {
+        return $this->content;
+    }
+
+    public function shouldRender(): bool
+    {
+        return $this->widget->is_active && 
+               $this->widgetService->canRender($this->widget);
+    }
+}
+
+// app/Core/Widget/View/Components/WidgetArea.php
+<?php
+
+namespace App\Core\Widget\View\Components;
+
+use App\Core\Widget\Services\WidgetService;
+use Illuminate\View\Component;
+use Illuminate\Support\Collection;
+
+class WidgetArea extends Component
+{
+    public Collection $widgets;
+
+    public function __construct(
+        private WidgetService $widgetService,
+        public string $area
+    ) {
+        $this->widgets = $this->widgetService->getWidgetsByArea($area);
+    }
+
+    public function render(): string
+    {
+        return view('widgets.area', [
+            'widgets' => $this->widgets,
+            'area' => $this->area
+        ]);
+    }
+
+    public function shouldRender(): bool
+    {
+        return $this->widgets->isNotEmpty();
+    }
+}
+
+// app/Core/Widget/View/Components/WidgetSettings.php
+<?php
+
+namespace App\Core\Widget\View\Components;
+
+use App\Core\Widget\Models\Widget;
+use Illuminate\View\Component;
+
+class WidgetSettings extends Component
+{
+    public function __construct(
+        public Widget $widget,
+        public array $settings
+    ) {}
+
+    public function render(): string
+    {
+        return view('widgets.settings', [
+            'widget' => $this->widget,
+            'settings' => $this->settings
+        ]);
+    }
+}
+
+// app/Core/Widget/View/Components/WidgetMetrics.php
+<?php
+
+namespace App\Core\Widget\View\Components;
+
+use App\Core\Widget\Models\Widget;
+use App\Core\Widget\Services\WidgetMetricsService;
+use Illuminate\View\Component;
+
+class WidgetMetrics extends Component
+{
+    public array $metrics;
+
+    public function __construct(
+        private WidgetMetricsService $metricsService,
+        public Widget $widget
+    ) {
+        $this->metrics = $this->metricsService->getMetrics($widget);
+    }
+
+    public function render(): string
+    {
+        return view('widgets.metrics', [
+            'widget' => $this->widget,
+            'metrics' => $this->metrics
+        ]);
+    }
+}

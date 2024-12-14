@@ -1,0 +1,197 @@
+// app/Core/Widget/Monitors/WidgetMonitor.php
+<?php
+
+namespace App\Core\Widget\Monitors;
+
+use App\Core\Widget\Models\Widget;
+use Illuminate\Support\Collection;
+
+class WidgetMonitor
+{
+    private array $metrics = [];
+
+    public function recordMetric(string $key, $value): void
+    {
+        $this->metrics[$key][] = $value;
+    }
+
+    public function getAverageMetric(string $key): float
+    {
+        if (!isset($this->metrics[$key])) {
+            return 0.0;
+        }
+
+        return array_sum($this->metrics[$key]) / count($this->metrics[$key]);
+    }
+
+    public function getAllMetrics(): array
+    {
+        $result = [];
+        foreach ($this->metrics as $key => $values) {
+            $result[$key] = [
+                'average' => $this->getAverageMetric($key),
+                'min' => min($values),
+                'max' => max($values),
+                'count' => count($values)
+            ];
+        }
+        return $result;
+    }
+
+    public function reset(): void
+    {
+        $this->metrics = [];
+    }
+}
+
+// app/Core/Widget/Monitors/WidgetPerformanceMonitor.php
+namespace App\Core\Widget\Monitors;
+
+use App\Core\Widget\Models\Widget;
+
+class WidgetPerformanceMonitor
+{
+    private array $measurements = [];
+    private float $startTime;
+    private float $startMemory;
+
+    public function start(): void
+    {
+        $this->startTime = microtime(true);
+        $this->startMemory = memory_get_usage();
+    }
+
+    public function end(Widget $widget): array
+    {
+        $endTime = microtime(true);
+        $endMemory = memory_get_usage();
+
+        $metrics = [
+            'load_time' => ($endTime - $this->startTime) * 1000,
+            'memory_usage' => ($endMemory - $this->startMemory) / 1024 / 1024,
+            'timestamp' => now()
+        ];
+
+        $this->measurements[$widget->id] = $metrics;
+
+        return $metrics;
+    }
+
+    public function getMetrics(Widget $widget): ?array
+    {
+        return $this->measurements[$widget->id] ?? null;
+    }
+
+    public function getAllMetrics(): array
+    {
+        return $this->measurements;
+    }
+
+    public function reset(): void
+    {
+        $this->measurements = [];
+    }
+}
+
+// app/Core/Widget/Monitors/WidgetHealthMonitor.php
+namespace App\Core\Widget\Monitors;
+
+use App\Core\Widget\Models\Widget;
+
+class WidgetHealthMonitor
+{
+    private array $status = [];
+
+    public function checkHealth(Widget $widget): array
+    {
+        $status = [
+            'is_active' => $widget->is_active,
+            'error_rate' => $this->calculateErrorRate($widget),
+            'response_time' => $this->calculateAverageResponseTime($widget),
+            'cache_hit_rate' => $this->calculateCacheHitRate($widget),
+            'memory_usage' => $this->getMemoryUsage($widget)
+        ];
+
+        $this->status[$widget->id] = $status;
+
+        return $status;
+    }
+
+    public function getStatus(Widget $widget): ?array
+    {
+        return $this->status[$widget->id] ?? null;
+    }
+
+    public function getAllStatus(): array
+    {
+        return $this->status;
+    }
+
+    private function calculateErrorRate(Widget $widget): float
+    {
+        // Implementation
+        return 0.0;
+    }
+
+    private function calculateAverageResponseTime(Widget $widget): float
+    {
+        // Implementation
+        return 0.0;
+    }
+
+    private function calculateCacheHitRate(Widget $widget): float
+    {
+        // Implementation
+        return 0.0;
+    }
+
+    private function getMemoryUsage(Widget $widget): float
+    {
+        // Implementation
+        return 0.0;
+    }
+}
+
+// app/Core/Widget/Monitors/WidgetUsageMonitor.php
+namespace App\Core\Widget\Monitors;
+
+use App\Core\Widget\Models\Widget;
+
+class WidgetUsageMonitor
+{
+    private array $usageStats = [];
+
+    public function recordUsage(Widget $widget): void
+    {
+        if (!isset($this->usageStats[$widget->id])) {
+            $this->usageStats[$widget->id] = [
+                'views' => 0,
+                'interactions' => 0,
+                'last_used' => null
+            ];
+        }
+
+        $this->usageStats[$widget->id]['views']++;
+        $this->usageStats[$widget->id]['last_used'] = now();
+    }
+
+    public function recordInteraction(Widget $widget, string $type): void
+    {
+        if (!isset($this->usageStats[$widget->id])) {
+            $this->recordUsage($widget);
+        }
+
+        $this->usageStats[$widget->id]['interactions']++;
+        $this->usageStats[$widget->id]['last_interaction'] = now();
+    }
+
+    public function getUsageStats(Widget $widget): ?array
+    {
+        return $this->usageStats[$widget->id] ?? null;
+    }
+
+    public function getAllUsageStats(): array
+    {
+        return $this->usageStats;
+    }
+}

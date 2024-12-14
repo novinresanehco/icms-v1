@@ -1,0 +1,65 @@
+// app/Core/Widget/Providers/WidgetServiceProvider.php
+<?php
+
+namespace App\Core\Widget\Providers;
+
+use App\Core\Widget\Contracts\WidgetRepositoryInterface;
+use App\Core\Widget\Repositories\WidgetRepository;
+use App\Core\Widget\Services\WidgetService;
+use App\Core\Widget\Services\WidgetCacheService;
+use App\Core\Widget\Services\WidgetMetricsService;
+use App\Core\Widget\Services\WidgetAuthorizationService;
+use Illuminate\Support\ServiceProvider;
+
+class WidgetServiceProvider extends ServiceProvider
+{
+    public function register(): void
+    {
+        $this->app->bind(WidgetRepositoryInterface::class, WidgetRepository::class);
+
+        $this->app->singleton(WidgetService::class, function ($app) {
+            return new WidgetService(
+                $app->make(WidgetRepositoryInterface::class),
+                $app->make(WidgetCacheService::class),
+                $app->make(WidgetAuthorizationService::class)
+            );
+        });
+
+        $this->app->singleton(WidgetCacheService::class, function ($app) {
+            return new WidgetCacheService(config('widgets.cache'));
+        });
+
+        $this->app->singleton(WidgetMetricsService::class, function ($app) {
+            return new WidgetMetricsService(config('widgets.metrics'));
+        });
+
+        $this->app->singleton(WidgetAuthorizationService::class, function ($app) {
+            return new WidgetAuthorizationService();
+        });
+    }
+
+    public function boot(): void
+    {
+        $this->publishes([
+            __DIR__.'/../config/widgets.php' => config_path('widgets.php'),
+        ], 'widget-config');
+
+        $this->publishes([
+            __DIR__.'/../database/migrations/' => database_path('migrations'),
+        ], 'widget-migrations');
+
+        $this->loadMigrationsFrom(__DIR__.'/../database/migrations');
+        $this->loadViewsFrom(__DIR__.'/../resources/views', 'widgets');
+        $this->loadTranslationsFrom(__DIR__.'/../resources/lang', 'widgets');
+        $this->loadRoutesFrom(__DIR__.'/../routes/web.php');
+        $this->loadRoutesFrom(__DIR__.'/../routes/api.php');
+    }
+}
+
+// app/Core/Widget/Providers/WidgetEventServiceProvider.php
+<?php
+
+namespace App\Core\Widget\Providers;
+
+use App\Core\Widget\Events\WidgetCreated;
+use App\Core\Widget\Events

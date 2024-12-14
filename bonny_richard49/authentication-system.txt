@@ -1,0 +1,212 @@
+<?php
+
+namespace App\Core\Auth;
+
+use App\Core\Security\SecurityManager;
+use App\Core\Events\EventDispatcher;
+use App\Core\Cache\CacheManager;
+use App\Core\Logging\AuditLogger;
+
+class AuthenticationManager
+{
+    private SecurityManager $security;
+    private EventDispatcher $events;
+    private CacheManager $cache;
+    private AuditLogger $auditLogger;
+
+    private const MAX_LOGIN_ATTEMPTS = 5;
+    private const LOCKOUT_TIME = 900; // 15 minutes
+    private const TOKEN_EXPIRY = 3600; // 1 hour
+
+    public function __construct(
+        SecurityManager $security,
+        EventDispatcher $events,
+        CacheManager $cache,
+        AuditLogger $auditLogger
+    ) {
+        $this->security = $security;
+        $this->events = $events;
+        $this->cache = $cache;
+        $this->auditLogger = $auditLogger;
+    }
+
+    public function authenticate(array $credentials): AuthToken
+    {
+        try {
+            $this->validateAttempts($credentials['username']);
+            $user = $this->validateCredentials($credentials);
+            $token = $this->generateToken($user);
+            $this->resetAttempts($credentials['username']);
+            
+            $this->events->dispatch('auth.authenticated', [
+                'user' => $user,
+                'token' => $token
+            ]);
+
+            return $token;
+
+        } catch (\Exception $e) {
+            $this->handleFailedAttempt($credentials['username']);
+            throw $e;
+        }
+    }
+
+    public function validateToken(string $token): bool
+    {
+        try {
+            $this->security->validateOperation('auth.validate_token');
+            $decoded = $this->decodeToken($token);
+            
+            if (!$this->isValidToken($decoded)) {
+                return false;
+            }
+
+            return true;
+
+        } catch (\Exception $e) {
+            $this->auditLogger->logError('auth.token_validation_failed', [
+                'token' => substr($token, 0, 8) . '...',
+                'error' => $e->getMessage()
+            ]);
+            return false;
+        }
+    }
+
+    public function refreshToken(string $token): AuthToken
+    {
+        $this->security->validateOperation('auth.refresh_token');
+
+        if (!$this->validateToken($token)) {
+            throw new AuthException('Invalid refresh token');
+        }
+
+        $decoded = $this->decodeToken($token);
+        $user = User::findOrFail($decoded['sub']);
+        
+        return $this->generateToken($user);
+    }
+
+    public function logout(string $token): void
+    {
+        $this->security->validateOperation('auth.logout');
+        
+        if ($this->validateToken($token)) {
+            $decoded = $this->decodeToken($token);
+            $this->revokeToken($decoded);
+            
+            $this->events->dispatch('auth.logged_out', [
+                'user_id' => $decoded['sub']
+            ]);
+        }
+    }
+
+    private function validateCredentials(array $credentials): User
+    {
+        $user = User::where('username', $credentials['username'])->first();
+
+        if (!$user || !$this->verifyPassword($credentials['password'], $user->password)) {
+            throw new AuthException('Invalid credentials');
+        }
+
+        if (!$user->isActive()) {
+            throw new AuthException('Account is inactive');
+        }
+
+        return $user;
+    }
+
+    private function verifyPassword(string $provided, string $stored): bool
+    {
+        return password_verify($provided, $stored);
+    }
+
+    private function generateToken(User $user): AuthToken
+    {
+        $payload = [
+            'sub' => $user->id,
+            'roles' => $user->roles->pluck('name')->toArray(),
+            'permissions' => $user->getAllPermissions()->pluck('name')->toArray(),
+            'iat' => time(),
+            'exp' => time() + self::TOKEN_EXPIRY
+        ];
+
+        $token = $this->security->encryptPayload($payload);
+
+        $this->cache->set(
+            "auth_token:{$token}",
+            $payload,
+            self::TOKEN_EXPIRY
+        );
+
+        return new AuthToken($token, $payload);
+    }
+
+    private function decodeToken(string $token): array
+    {
+        return $this->security->decryptPayload($token);
+    }
+
+    private function isValidToken(array $decoded): bool
+    {
+        if (!isset($decoded['exp']) || $decoded['exp'] < time()) {
+            return false;
+        }
+
+        $cached = $this->cache->get("auth_token:{$token}");
+        if (!$cached) {
+            return false;
+        }
+
+        return true;
+    }
+
+    private function revokeToken(array $decoded): void
+    {
+        $this->cache->forget("auth_token:{$token}");
+    }
+
+    private function validateAttempts(string $username): void
+    {
+        $key = "login_attempts:{$username}";
+        $attempts = (int)$this->cache->get($key, 0);
+
+        if ($attempts >= self::MAX_LOGIN_ATTEMPTS) {
+            throw new AuthException('Account is locked. Please try again later.');
+        }
+    }
+
+    private function handleFailedAttempt(string $username): void
+    {
+        $key = "login_attempts:{$username}";
+        $attempts = $this->cache->increment($key);
+
+        if ($attempts >= self::MAX_LOGIN_ATTEMPTS) {
+            $this->lockAccount($username);
+        }
+
+        $this->auditLogger->logWarning('auth.failed_attempt', [
+            'username' => $username,
+            'attempts' => $attempts
+        ]);
+    }
+
+    private function lockAccount(string $username): void
+    {
+        $this->cache->put(
+            "account_locked:{$username}",
+            true,
+            self::LOCKOUT_TIME
+        );
+
+        $this->events->dispatch('auth.account_locked', [
+            'username' => $username,
+            'lockout_time' => self::LOCKOUT_TIME
+        ]);
+    }
+
+    private function resetAttempts(string $username): void
+    {
+        $this->cache->forget("login_attempts:{$username}");
+        $this->cache->forget("account_locked:{$username}");
+    }
+}

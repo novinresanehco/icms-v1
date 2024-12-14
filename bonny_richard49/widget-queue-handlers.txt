@@ -1,0 +1,144 @@
+// app/Core/Widget/Queue/Handlers/WidgetQueueHandler.php
+<?php
+
+namespace App\Core\Widget\Queue\Handlers;
+
+use App\Core\Widget\Models\Widget;
+use Illuminate\Bus\Batch;
+use Illuminate\Support\Facades\Bus;
+use App\Core\Widget\Queue\Jobs\ProcessWidgetJob;
+use App\Core\Widget\Queue\Jobs\OptimizeWidgetJob;
+use App\Core\Widget\Queue\Jobs\CleanupWidgetJob;
+
+class WidgetQueueHandler
+{
+    public function dispatchJobs(Widget $widget): Batch
+    {
+        return Bus::batch([
+            new ProcessWidgetJob($widget),
+            new OptimizeWidgetJob($widget),
+            new CleanupWidgetJob($widget)
+        ])->dispatch();
+    }
+
+    public function processWidget(Widget $widget, array $data = []): void
+    {
+        ProcessWidgetJob::dispatch($widget, $data);
+    }
+
+    public function optimizeWidget(Widget $widget): void
+    {
+        OptimizeWidgetJob::dispatch($widget);
+    }
+
+    public function cleanupWidget(Widget $widget): void
+    {
+        CleanupWidgetJob::dispatch($widget);
+    }
+}
+
+// app/Core/Widget/Queue/Handlers/WidgetMetricsQueueHandler.php
+<?php
+
+namespace App\Core\Widget\Queue\Handlers;
+
+use App\Core\Widget\Models\Widget;
+use App\Core\Widget\Queue\Jobs\ProcessWidgetMetricsJob;
+use App\Core\Widget\Queue\Jobs\GenerateWidgetReportJob;
+use Carbon\Carbon;
+
+class WidgetMetricsQueueHandler
+{
+    public function processMetrics(Widget $widget, array $metrics): void
+    {
+        ProcessWidgetMetricsJob::dispatch($widget, $metrics);
+    }
+
+    public function generateReport(
+        Widget $widget,
+        string $reportType,
+        Carbon $startDate,
+        Carbon $endDate
+    ): void {
+        GenerateWidgetReportJob::dispatch($widget, $reportType, $startDate, $endDate);
+    }
+}
+
+// app/Core/Widget/Queue/Handlers/WidgetMaintenanceQueueHandler.php
+<?php
+
+namespace App\Core\Widget\Queue\Handlers;
+
+use App\Core\Widget\Models\Widget;
+use App\Core\Widget\Queue\Jobs\CleanupWidgetJob;
+use App\Core\Widget\Queue\Jobs\OptimizeWidgetJob;
+
+class WidgetMaintenanceQueueHandler
+{
+    public function optimizeWidget(Widget $widget): void
+    {
+        OptimizeWidgetJob::dispatch($widget);
+    }
+
+    public function cleanupWidget(Widget $widget): void
+    {
+        CleanupWidgetJob::dispatch($widget);
+    }
+
+    public function runMaintenance(Widget $widget): void
+    {
+        OptimizeWidgetJob::dispatch($widget);
+        CleanupWidgetJob::dispatch($widget);
+    }
+}
+
+// app/Core/Widget/Queue/Handlers/WidgetBatchQueueHandler.php
+<?php
+
+namespace App\Core\Widget\Queue\Handlers;
+
+use App\Core\Widget\Models\Widget;
+use Illuminate\Bus\Batch;
+use Illuminate\Support\Facades\Bus;
+use App\Core\Widget\Queue\Jobs\ProcessWidgetJob;
+use App\Core\Widget\Queue\Jobs\OptimizeWidgetJob;
+use App\Core\Widget\Queue\Jobs\GenerateWidgetReportJob;
+
+class WidgetBatchQueueHandler
+{
+    public function dispatchBatch(Widget $widget, array $operations): Batch
+    {
+        $jobs = $this->createJobs($widget, $operations);
+        
+        return Bus::batch($jobs)
+            ->allowFailures()
+            ->onConnection('redis')
+            ->dispatch();
+    }
+
+    private function createJobs(Widget $widget, array $operations): array
+    {
+        $jobs = [];
+        
+        foreach ($operations as $operation) {
+            $jobs[] = $this->createJob($widget, $operation);
+        }
+
+        return $jobs;
+    }
+
+    private function createJob(Widget $widget, string $operation): object
+    {
+        return match($operation) {
+            'process' => new ProcessWidgetJob($widget),
+            'optimize' => new OptimizeWidgetJob($widget),
+            'report' => new GenerateWidgetReportJob(
+                $widget,
+                'performance',
+                now()->subDay(),
+                now()
+            ),
+            default => throw new \InvalidArgumentException("Invalid operation: {$operation}")
+        };
+    }
+}

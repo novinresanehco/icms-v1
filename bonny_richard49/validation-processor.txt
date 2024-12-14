@@ -1,0 +1,104 @@
+// app/Core/Validation/ValidationProcessor.php
+<?php
+
+namespace App\Core\Validation;
+
+use App\Core\Validation\Validator;
+use App\Core\Validation\Rules\RuleFactory;
+use App\Core\Validation\Handlers\AbstractValidationHandler;
+
+class ValidationProcessor
+{
+    private Validator $validator;
+    private ?AbstractValidationHandler $handler = null;
+    private array $rules = [];
+    private array $messages = [];
+
+    public function __construct(Validator $validator)
+    {
+        $this->validator = $validator;
+    }
+
+    public function setHandler(AbstractValidationHandler $handler): void
+    {
+        $this->handler = $handler;
+    }
+
+    public function setRules(array $rules): void
+    {
+        $this->rules = $rules;
+    }
+
+    public function setMessages(array $messages): void
+    {
+        $this->messages = $messages;
+    }
+
+    public function process(array $data): array
+    {
+        if ($this->handler) {
+            $data = $this->handler->handle($data);
+        }
+
+        return $this->validator->validate($data, $this->rules, $this->messages);
+    }
+}
+
+// app/Core/Validation/ValidationServiceProvider.php
+<?php
+
+namespace App\Core\Validation;
+
+use Illuminate\Support\ServiceProvider;
+use App\Core\Validation\Rules\RuleFactory;
+use App\Core\Validation\Rules\PhoneRule;
+use App\Core\Validation\Rules\PasswordRule;
+use App\Core\Validation\Rules\JsonRule;
+use App\Core\Validation\Rules\DateTimeRule;
+
+class ValidationServiceProvider extends ServiceProvider
+{
+    public function register(): void
+    {
+        $this->app->singleton(RuleFactory::class, function () {
+            $factory = new RuleFactory();
+            
+            $factory->register('phone', PhoneRule::class);
+            $factory->register('password', PasswordRule::class);
+            $factory->register('json', JsonRule::class);
+            $factory->register('datetime', DateTimeRule::class);
+            
+            return $factory;
+        });
+
+        $this->app->singleton(Validator::class, function ($app) {
+            return new Validator($app->make(RuleFactory::class));
+        });
+
+        $this->app->singleton(ValidationProcessor::class, function ($app) {
+            return new ValidationProcessor($app->make(Validator::class));
+        });
+    }
+}
+
+// app/Core/Validation/ValidationBuilder.php
+<?php
+
+namespace App\Core\Validation;
+
+use App\Core\Validation\ValidationProcessor;
+use App\Core\Validation\Handlers\AbstractValidationHandler;
+
+class ValidationBuilder
+{
+    private ValidationProcessor $processor;
+    private array $rules = [];
+    private array $messages = [];
+    private array $handlers = [];
+
+    public function __construct(ValidationProcessor $processor)
+    {
+        $this->processor = $processor;
+    }
+
+    public function withRules(array $rules

@@ -1,0 +1,55 @@
+<?php
+
+namespace App\Core\Category\Factory;
+
+use App\Core\Category\Models\Category;
+use App\Core\Category\DTO\CategoryData;
+use App\Core\Shared\Factory\FactoryInterface;
+use Illuminate\Support\Str;
+
+class CategoryFactory implements FactoryInterface
+{
+    /**
+     * Create a new Category instance.
+     *
+     * @param CategoryData $data
+     * @return Category
+     */
+    public function create(CategoryData $data): Category
+    {
+        // Validate data
+        $errors = $data->validate();
+        if (!empty($errors)) {
+            throw new \InvalidArgumentException('Invalid category data: ' . json_encode($errors));
+        }
+
+        // Generate slug if not provided
+        if (empty($data->slug)) {
+            $data->slug = Str::slug($data->name);
+        }
+
+        // Create category model
+        $category = new Category([
+            'name' => $data->name,
+            'slug' => $data->slug,
+            'description' => $data->description,
+            'parent_id' => $data->parentId,
+            'order' => $data->order,
+            'meta' => $data->meta,
+            'is_active' => $data->isActive,
+            'template' => $data->template,
+            'settings' => $data->settings,
+        ]);
+
+        return $category;
+    }
+
+    /**
+     * Create Category from array data.
+     *
+     * @param array $data
+     * @return Category
+     */
+    public function createFromArray(array $data): Category
+    {
+        return

@@ -1,0 +1,158 @@
+// app/Core/Widget/Processors/Api/WidgetRequestProcessor.php
+<?php
+
+namespace App\Core\Widget\Processors\Api;
+
+use App\Core\Widget\Requests\Api\CreateWidgetRequest;
+use App\Core\Widget\Requests\Api\UpdateWidgetRequest;
+use App\Core\Widget\Services\WidgetValidationService;
+
+class WidgetRequestProcessor
+{
+    public function __construct(
+        private WidgetValidationService $validationService
+    ) {}
+
+    public function processCreateRequest(CreateWidgetRequest $request): array
+    {
+        $data = $request->validated();
+        return $this->processCommonData($data);
+    }
+
+    public function processUpdateRequest(UpdateWidgetRequest $request): array
+    {
+        $data = $request->validated();
+        return $this->processCommonData($data);
+    }
+
+    private function processCommonData(array $data): array
+    {
+        // Process settings
+        if (isset($data['settings'])) {
+            $data['settings'] = $this->processSettings($data['settings']);
+        }
+
+        // Process visibility rules
+        if (isset($data['visibility_rules'])) {
+            $data['visibility_rules'] = $this->processVisibilityRules($data['visibility_rules']);
+        }
+
+        // Process permissions
+        if (isset($data['permissions'])) {
+            $data['permissions'] = $this->processPermissions($data['permissions']);
+        }
+
+        return $data;
+    }
+
+    private function processSettings(array $settings): array
+    {
+        // Validate settings structure
+        $this->validationService->validateSettings($settings);
+
+        // Convert boolean strings to actual booleans
+        foreach ($settings as $key => $value) {
+            if (is_string($value) && in_array(strtolower($value), ['true', 'false'])) {
+                $settings[$key] = strtolower($value) === 'true';
+            }
+        }
+
+        return $settings;
+    }
+
+    private function processVisibilityRules(array $rules): array
+    {
+        // Validate rules structure
+        $this->validationService->validateVisibilityRules($rules);
+
+        // Ensure operator is lowercase
+        if (isset($rules['operator'])) {
+            $rules['operator'] = strtolower($rules['operator']);
+        }
+
+        return $rules;
+    }
+
+    private function processPermissions(array $permissions): array
+    {
+        // Validate permissions structure
+        $this->validationService->validatePermissions($permissions);
+
+        // Normalize permission format
+        return array_map(function ($permission) {
+            return [
+                'type' => strtolower($permission['type']),
+                'value' => $permission['value']
+            ];
+        }, $permissions);
+    }
+}
+
+// app/Core/Widget/Processors/Api/WidgetResponseProcessor.php
+<?php
+
+namespace App\Core\Widget\Processors\Api;
+
+use App\Core\Widget\Models\Widget;
+use App\Core\Widget\Resources\WidgetResource;
+use Illuminate\Http\JsonResponse;
+
+class WidgetResponseProcessor
+{
+    public function processIndexResponse(array $widgets): JsonResponse
+    {
+        return response()->json([
+            'data' => WidgetResource::collection($widgets),
+            'meta' => [
+                'total' => count($widgets),
+                'timestamp' => now()->toIso8601String()
+            ]
+        ]);
+    }
+
+    public function processStoreResponse(Widget $widget): JsonResponse
+    {
+        return response()->json([
+            'data' => new WidgetResource($widget),
+            'meta' => [
+                'timestamp' => now()->toIso8601String()
+            ]
+        ], 201);
+    }
+
+    public function processShowResponse(Widget $widget): JsonResponse
+    {
+        return response()->json([
+            'data' => new WidgetResource($widget),
+            'meta' => [
+                'timestamp' => now()->toIso8601String()
+            ]
+        ]);
+    }
+
+    public function processUpdateResponse(Widget $widget): JsonResponse
+    {
+        return response()->json([
+            'data' => new WidgetResource($widget),
+            'meta' => [
+                'timestamp' => now()->toIso8601String()
+            ]
+        ]);
+    }
+
+    public function processDeleteResponse(): JsonResponse
+    {
+        return response()->json(null, 204);
+    }
+
+    public function processErrorResponse(\Exception $e, int $statusCode = 400): JsonResponse
+    {
+        return response()->json([
+            'error' => [
+                'message' => $e->getMessage(),
+                'code' => $statusCode,
+                'timestamp' => now()->toIso8601String()
+            ]
+        ], $statusCode);
+    }
+}

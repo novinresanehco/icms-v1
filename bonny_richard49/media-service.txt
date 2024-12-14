@@ -1,0 +1,143 @@
+<?php
+
+namespace App\Services;
+
+use App\Core\Services\BaseService;
+use App\Core\Media\MediaManager;
+use App\Core\Security\SecurityManager;
+use App\Core\Storage\StorageManager;
+use App\Core\Events\EventDispatcher;
+use Illuminate\Http\UploadedFile;
+
+class MediaService extends BaseService
+{
+    protected MediaManager $mediaManager;
+    protected StorageManager $storageManager;
+
+    public function __construct(
+        MediaManager $mediaManager,
+        StorageManager $storageManager,
+        SecurityManager $security,
+        EventDispatcher $events
+    ) {
+        parent::__construct($security, $events);
+        $this->mediaManager = $mediaManager;
+        $this->storageManager = $storageManager;
+    }
+
+    public function upload(UploadedFile $file, array $metadata = []): Media
+    {
+        return $this->executeOperation('media.upload', function() use ($file, $metadata) {
+            return $this->mediaManager->upload($file, $metadata);
+        });
+    }
+
+    public function delete(Media $media): bool
+    {
+        return $this->executeOperation('media.delete', function() use ($media) {
+            return $this->mediaManager->delete($media);
+        });
+    }
+
+    public function optimize(Media $media): void
+    {
+        $this->executeOperation('media.optimize', function() use ($media) {
+            $this->mediaManager->processOptimizations($media);
+        });
+    }
+
+    public function generateThumbnails(Media $media): void
+    {
+        $this->executeOperation('media.thumbnails', function() use ($media) {
+            $this->mediaManager->generateThumbnails($media);
+        });
+    }
+
+    public function updateMetadata(Media $media, array $metadata): void
+    {
+        $this->executeOperation('media.update_metadata', function() use ($media, $metadata) {
+            $media->updateMetadata($metadata);
+        });
+    }
+
+    public function move(Media $media, string $newPath): void
+    {
+        $this->executeOperation('media.move', function() use ($media, $newPath) {
+            $oldPath = $media->path;
+            
+            $this->storageManager->move($oldPath, $newPath);
+            
+            $media->path = $newPath;
+            $media->save();
+        });
+    }
+
+    public function copy(Media $media, string $newPath): Media
+    {
+        return $this->executeOperation('media.copy', function() use ($media, $newPath) {
+            $this->storageManager->copy($media->path, $newPath);
+            
+            $newMedia = $media->replicate();
+            $newMedia->path = $newPath;
+            $newMedia->save();
+            
+            return $newMedia;
+        });
+    }
+
+    public function validate(UploadedFile $file): bool
+    {
+        return $this->executeOperation('media.validate', function() use ($file) {
+            return $this->mediaManager->validateFile($file);
+        });
+    }
+
+    protected function validateOperation(string $operation): void
+    {
+        parent::validateOperation($operation);
+
+        switch ($operation) {
+            case 'media.upload':
+                $this->validateUploadQuota();
+                break;
+                
+            case 'media.optimize':
+                $this->validateOptimizationCapacity();
+                break;
+                
+            case 'media.thumbnails':
+                $this->validateThumbnailGeneration();
+                break;
+        }
+    }
+
+    protected function validateUploadQuota(): void
+    {
+        $usedStorage = Media::sum('size');
+        $maxStorage = config('media.max_storage_bytes');
+
+        if ($usedStorage >= $maxStorage) {
+            throw new MediaException('Storage quota exceeded');
+        }
+    }
+
+    protected function validateOptimizationCapacity(): void
+    {
+        $activeOptimizations = Cache::get('media_optimizations_count', 0);
+        $maxConcurrent = config('media.max_concurrent_optimizations', 5);
+
+        if ($activeOptimizations >= $maxConcurrent) {
+            throw new MediaException('Maximum concurrent optimizations reached');
+        }
+    }
+
+    protected function validateThumbnailGeneration(): void
+    {
+        $activeThumbnailJobs = Cache::get('thumbnail_generation_count', 0);
+        $maxConcurrent = config('media.max_concurrent_thumbnail_jobs', 10);
+
+        if ($activeThumbnailJobs >= $maxConcurrent) {
+            throw new MediaException('Maximum concurrent thumbnail generation jobs reached');
+        }
+    }
+}

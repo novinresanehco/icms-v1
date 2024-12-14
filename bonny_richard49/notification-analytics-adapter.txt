@@ -1,0 +1,111 @@
+<?php
+
+namespace App\Core\Notification\Analytics\Adapter;
+
+class AnalyticsAdapter
+{
+    private array $adapters = [];
+    private array $metrics = [];
+
+    public function registerAdapter(string $name, AnalyticsInterface $adapter): void
+    {
+        $this->adapters[$name] = $adapter;
+    }
+
+    public function process(string $adapter, array $data, array $options = []): array
+    {
+        if (!isset($this->adapters[$adapter])) {
+            throw new \InvalidArgumentException("Unknown adapter: {$adapter}");
+        }
+
+        $startTime = microtime(true);
+        try {
+            $result = $this->adapters[$adapter]->process($data, $options);
+            $this->recordMetrics($adapter, $data, $result, microtime(true) - $startTime, true);
+            return $result;
+        } catch (\Exception $e) {
+            $this->recordMetrics($adapter, $data, [], microtime(true) - $startTime, false);
+            throw $e;
+        }
+    }
+
+    public function transform(string $adapter, array $data, array $options = []): array
+    {
+        if (!isset($this->adapters[$adapter])) {
+            throw new \InvalidArgumentException("Unknown adapter: {$adapter}");
+        }
+
+        $startTime = microtime(true);
+        try {
+            $result = $this->adapters[$adapter]->transform($data, $options);
+            $this->recordMetrics($adapter, $data, $result, microtime(true) - $startTime, true);
+            return $result;
+        } catch (\Exception $e) {
+            $this->recordMetrics($adapter, $data, [], microtime(true) - $startTime, false);
+            throw $e;
+        }
+    }
+
+    public function getMetrics(): array
+    {
+        return $this->metrics;
+    }
+
+    private function recordMetrics(string $adapter, array $input, array $output, float $duration, bool $success): void
+    {
+        if (!isset($this->metrics[$adapter])) {
+            $this->metrics[$adapter] = [
+                'total_operations' => 0,
+                'successful_operations' => 0,
+                'failed_operations' => 0,
+                'total_duration' => 0,
+                'total_input_size' => 0,
+                'total_output_size' => 0
+            ];
+        }
+
+        $metrics = &$this->metrics[$adapter];
+        $metrics['total_operations']++;
+        $metrics[$success ? 'successful_operations' : 'failed_operations']++;
+        $metrics['total_duration'] += $duration;
+        $metrics['total_input_size'] += count($input);
+        $metrics['total_output_size'] += count($output);
+    }
+}
+
+interface AnalyticsInterface
+{
+    public function process(array $data, array $options = []): array;
+    public function transform(array $data, array $options = []): array;
+}
+
+class GoogleAnalyticsAdapter implements AnalyticsInterface
+{
+    private array $config;
+
+    public function __construct(array $config = [])
+    {
+        $this->config = array_merge([
+            'property_id' => null,
+            'api_key' => null,
+            'batch_size' => 20
+        ], $config);
+    }
+
+    public function process(array $data, array $options = []): array
+    {
+        // Mock implementation
+        return array_map(function($item) {
+            return [
+                'event_name' => $item['type'] ?? 'unknown',
+                'event_category' => $item['category'] ?? 'notification',
+                'event_label' => $item['label'] ?? '',
+                'event_value' => $item['value'] ?? 0
+            ];
+        }, $data);
+    }
+
+    public function transform(array $data, array $options = []): array
+    {
+        // Mock implementation
+        

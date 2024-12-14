@@ -1,0 +1,190 @@
+<?php
+
+namespace App\Core\Security;
+
+class EncryptionService implements EncryptionInterface
+{
+    private string $algorithm = 'aes-256-gcm';
+    private string $key;
+    private array $state = [];
+
+    public function encryptData(array $data): array
+    {
+        try {
+            // Initialize encryption state
+            $this->initializeState();
+
+            // Encrypt each field
+            $encrypted = [];
+            foreach ($data as $key => $value) {
+                $encrypted[$key] = $this->encryptField($value);
+            }
+
+            // Add integrity hash
+            $encrypted['_hash'] = $this->generateIntegrityHash($encrypted);
+
+            return $encrypted;
+
+        } catch (\Exception $e) {
+            $this->handleEncryptionFailure($e);
+            throw new EncryptionException('Encryption failed', 0, $e);
+        }
+    }
+
+    public function decryptData(array $data): array
+    {
+        try {
+            // Verify integrity hash
+            $this->verifyIntegrityHash($data);
+
+            // Decrypt each field
+            $decrypted = [];
+            foreach ($data as $key => $value) {
+                if ($key !== '_hash') {
+                    $decrypted[$key] = $this->decryptField($value);
+                }
+            }
+
+            return $decrypted;
+
+        } catch (\Exception $e) {
+            $this->handleDecryptionFailure($e);
+            throw new EncryptionException('Decryption failed', 0, $e);
+        }
+    }
+
+    public function validateState(): bool
+    {
+        return !empty($this->key) && 
+               !empty($this->state) &&
+               $this->validateAlgorithm();
+    }
+
+    public function clearSensitiveData(): void
+    {
+        $this->state = [];
+        openssl_free_key($this->key);
+    }
+
+    private function initializeState(): void 
+    {
+        $this->state = [
+            'iv' => random_bytes(16),
+            'tag' => '',
+            'aad' => random_bytes(32)
+        ];
+    }
+
+    private function encryptField($value): string 
+    {
+        // Generate unique IV for each field
+        $iv = random_bytes(16);
+
+        // Encrypt data
+        $encrypted = openssl_encrypt(
+            serialize($value),
+            $this->algorithm,
+            $this->key,
+            OPENSSL_RAW_DATA,
+            $iv,
+            $tag,
+            $this->state['aad'],
+            16
+        );
+
+        if ($encrypted === false) {
+            throw new EncryptionException('Field encryption failed');
+        }
+
+        // Combine IV, tag and encrypted data
+        return base64_encode($iv . $tag . $encrypted);
+    }
+
+    private function decryptField(string $encrypted): mixed
+    {
+        // Decode combined string
+        $data = base64_decode($encrypted);
+        
+        // Extract IV and tag
+        $iv = substr($data, 0, 16);
+        $tag = substr($data, 16, 16);
+        $ciphertext = substr($data, 32);
+
+        // Decrypt data
+        $decrypted = openssl_decrypt(
+            $ciphertext,
+            $this->algorithm,
+            $this->key,
+            OPENSSL_RAW_DATA,
+            $iv,
+            $tag,
+            $this->state['aad']
+        );
+
+        if ($decrypted === false) {
+            throw new EncryptionException('Field decryption failed');
+        }
+
+        return unserialize($decrypted);
+    }
+
+    private function generateIntegrityHash(array $data): string
+    {
+        return hash_hmac(
+            'sha256',
+            serialize($data),
+            $this->key
+        );
+    }
+
+    private function verifyIntegrityHash(array $data): void
+    {
+        if (!isset($data['_hash'])) {
+            throw new IntegrityException('Missing integrity hash');
+        }
+
+        $hash = $data['_hash'];
+        unset($data['_hash']);
+
+        if (!hash_equals($hash, $this->generateIntegrityHash($data))) {
+            throw new IntegrityException('Invalid integrity hash');
+        }
+    }
+
+    private function validateAlgorithm(): bool
+    {
+        return in_array(
+            $this->algorithm,
+            openssl_get_cipher_methods()
+        );
+    }
+
+    private function handleEncryptionFailure(\Exception $e): void
+    {
+        // Clear sensitive data
+        $this->clearSensitiveData();
+
+        // Log failure
+        error_log("Encryption failed: {$e->getMessage()}");
+    }
+
+    private function handleDecryptionFailure(\Exception $e): void
+    {
+        // Clear sensitive data
+        $this->clearSensitiveData();
+
+        // Log failure
+        error_log("Decryption failed: {$e->getMessage()}");
+    }
+}
+
+interface EncryptionInterface
+{
+    public function encryptData(array $data): array;
+    public function decryptData(array $data): array;
+    public function validateState(): bool;
+    public function clearSensitiveData(): void;
+}
+
+class EncryptionException extends \Exception {}
+class IntegrityException extends EncryptionException {}

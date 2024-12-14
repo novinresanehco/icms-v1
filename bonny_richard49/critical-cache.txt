@@ -1,0 +1,61 @@
+// app/Core/Cache/CacheManager.php
+<?php
+
+namespace App\Core\Cache;
+
+use App\Core\Security\SecurityKernel;
+use App\Core\Validation\ValidationService;
+
+class CacheManager implements CacheInterface
+{
+    private SecurityKernel $security;
+    private ValidationService $validator;
+    private array $config;
+    private MetricsCollector $metrics;
+
+    public function get(string $key, array $context = []): mixed
+    {
+        return $this->security->executeSecureOperation(
+            fn() => $this->executeGet($key),
+            ['action' => 'cache_get', 'key' => $key] + $context
+        );
+    }
+
+    public function set(string $key, mixed $value, array $context = []): bool
+    {
+        return $this->security->executeSecureOperation(
+            fn() => $this->executeSet($key, $value),
+            ['action' => 'cache_set', 'key' => $key] + $context
+        );
+    }
+
+    public function has(string $key): bool
+    {
+        return $this->executeHas($key);
+    }
+
+    public function forget(string $key): bool
+    {
+        return $this->executeForgetting($key);
+    }
+
+    private function executeGet(string $key): mixed
+    {
+        $startTime = microtime(true);
+        
+        try {
+            $value = Cache::get($key);
+            
+            $this->recordMetrics('get', $key, $startTime, !is_null($value));
+            
+            return $value;
+            
+        } catch (\Exception $e) {
+            $this->handleCacheFailure('get', $e, $key);
+            throw new CacheException('Cache get operation failed', 0, $e);
+        }
+    }
+
+    private function executeSet(string $key, mixed $value): bool
+    {
+        

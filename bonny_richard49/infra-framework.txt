@@ -1,0 +1,128 @@
+<?php
+
+namespace App\Core\Infrastructure;
+
+/**
+ * CRITICAL INFRASTRUCTURE IMPLEMENTATION
+ * Zero-tolerance infrastructure management
+ */
+class InfrastructureManager implements InfrastructureInterface
+{
+    private SecurityManager $security;
+    private MonitoringService $monitor;
+    private ResourceManager $resources;
+    private DatabaseManager $db;
+    private CacheManager $cache;
+    private LogManager $logger;
+
+    public function validateSystem(): void
+    {
+        try {
+            // Validate core components
+            $this->validateCoreComponents();
+            
+            // Check resources
+            $this->validateResources();
+            
+            // Verify services
+            $this->validateServices();
+            
+        } catch (\Exception $e) {
+            $this->handleValidationFailure($e);
+            throw new InfrastructureException('System validation failed', 0, $e);
+        }
+    }
+
+    public function monitorOperation(string $type): void
+    {
+        $monitorId = $this->monitor->startMonitoring($type);
+        
+        try {
+            // Monitor resources
+            $this->resources->monitor();
+            
+            // Track database
+            $this->db->monitor();
+            
+            // Monitor cache
+            $this->cache->monitor();
+            
+            // Verify thresholds
+            $this->verifyThresholds();
+            
+        } catch (\Exception $e) {
+            $this->handleMonitoringFailure($e, $monitorId);
+            throw new InfrastructureException('Operation monitoring failed', 0, $e);
+        }
+    }
+
+    protected function validateCoreComponents(): void
+    {
+        // Validate security
+        if (!$this->security->validateConfiguration()) {
+            throw new InfrastructureException('Security validation failed');
+        }
+
+        // Validate database
+        if (!$this->db->validateConnection()) {
+            throw new InfrastructureException('Database validation failed');
+        }
+
+        // Validate cache
+        if (!$this->cache->validateConnection()) {
+            throw new InfrastructureException('Cache validation failed');
+        }
+    }
+
+    protected function validateResources(): void
+    {
+        // Check memory
+        if (!$this->resources->checkMemory()) {
+            throw new InfrastructureException('Insufficient memory');
+        }
+
+        // Check CPU
+        if (!$this->resources->checkCPU()) {
+            throw new InfrastructureException('Insufficient CPU');
+        }
+
+        // Check storage
+        if (!$this->resources->checkStorage()) {
+            throw new InfrastructureException('Insufficient storage');
+        }
+    }
+
+    protected function validateServices(): void
+    {
+        // Validate monitoring service
+        if (!$this->monitor->validate()) {
+            throw new InfrastructureException('Monitoring validation failed');
+        }
+
+        // Validate logging service
+        if (!$this->logger->validate()) {
+            throw new InfrastructureException('Logging validation failed');
+        }
+    }
+
+    protected function verifyThresholds(): void
+    {
+        $metrics = $this->monitor->getMetrics();
+
+        // Verify CPU threshold
+        if ($metrics['cpu'] > $this->config->getCPUThreshold()) {
+            throw new ThresholdException('CPU threshold exceeded');
+        }
+
+        // Verify memory threshold
+        if ($metrics['memory'] > $this->config->getMemoryThreshold()) {
+            throw new ThresholdException('Memory threshold exceeded');
+        }
+
+        // Verify response time threshold
+        if ($metrics['response_time'] > $this->config->getResponseTimeThreshold()) {
+            throw new ThresholdException('Response time threshold exceeded');
+        }
+    }
+
+    protected function handleValidationFailure(\Exception $e

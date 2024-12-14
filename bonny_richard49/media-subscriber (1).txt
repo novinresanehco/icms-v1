@@ -1,0 +1,122 @@
+<?php
+
+namespace App\Subscribers;
+
+use App\Core\Events\EventDispatcher;
+use App\Core\Logging\AuditLogger;
+use App\Core\Cache\CacheManager;
+use App\Jobs\ProcessMediaOptimization;
+use App\Jobs\GenerateMediaThumbnails;
+
+class MediaEventSubscriber
+{
+    private AuditLogger $auditLogger;
+    private CacheManager $cache;
+
+    public function __construct(
+        AuditLogger $auditLogger,
+        CacheManager $cache
+    ) {
+        $this->auditLogger = $auditLogger;
+        $this->cache = $cache;
+    }
+
+    public function subscribe(EventDispatcher $events): void
+    {
+        $events->listen('media.uploaded', [$this, 'handleMediaUploaded']);
+        $events->listen('media.optimized', [$this, 'handleMediaOptimized']);
+        $events->listen('media.deleted', [$this, 'handleMediaDeleted']);
+        $events->listen('media.thumbnails_generated', [$this, 'handleThumbnailsGenerated']);
+        $events->listen('media.optimization_failed', [$this, 'handleOptimizationFailed']);
+        $events->listen('media.thumbnail_generation_failed', [$this, 'handleThumbnailGenerationFailed']);
+    }
+
+    public function handleMediaUploaded($media): void
+    {
+        $this->auditLogger->logModelEvent('media.uploaded', $media);
+        $this->clearMediaCache();
+
+        if ($media->shouldOptimize()) {
+            ProcessMediaOptimization::dispatch($media);
+        }
+
+        if ($media->isImage()) {
+            GenerateMediaThumbnails::dispatch($media);
+        }
+    }
+
+    public function handleMediaOptimized($media): void
+    {
+        $this->auditLogger->logModelEvent('media.optimized', $media);
+        $this->clearMediaCache();
+        
+        Cache::decrement('media_optimizations_count');
+    }
+
+    public function handleMediaDeleted($media): void
+    {
+        $this->auditLogger->logModelEvent('media.deleted', $media);
+        $this->clearMediaCache();
+        
+        // Cleanup related resources
+        foreach ($media->thumbnails as $thumbnail) {
+            $thumbnail->delete();
+        }
+    }
+
+    public function handleThumbnailsGenerated($media): void
+    {
+        $this->auditLogger->logModelEvent('media.thumbnails_generated', $media);
+        $this->clearMediaCache();
+        
+        Cache::decrement('thumbnail_generation_count');
+    }
+
+    public function handleOptimizationFailed($event): void
+    {
+        $this->auditLogger->logError('media.optimization_failed', [
+            'media' => $event['media']->id,
+            'error' => $event['error'],
+            'attempts' => $event['attempts'] ?? 1
+        ]);
+        
+        Cache::decrement('media_optimizations_count');
+
+        if (($event['attempts'] ?? 1) >= 3) {
+            $this->notifyAdminsOfFailure('Media optimization failed', $event);
+        }
+    }
+
+    public function handleThumbnailGenerationFailed($event): void
+    {
+        $this->auditLogger->logError('media.thumbnail_generation_failed', [
+            'media' => $event['media']->id,
+            'error' => $event['error'],
+            'attempts' => $event['attempts'] ?? 1
+        ]);
+        
+        Cache::decrement('thumbnail_generation_count');
+
+        if (($event['attempts'] ?? 1) >= 3) {
+            $this->notifyAdminsOfFailure('Thumbnail generation failed', $event);
+        }
+    }
+
+    private function clearMediaCache(): void
+    {
+        $this->cache->tags(['media'])->flush();
+    }
+
+    private function notifyAdminsOfFailure(string $message, array $event): void
+    {
+        $admins = User::whereHas('roles', function($query) {
+            $query->where('name', 'admin');
+        })->get();
+
+        Notification::send($admins, new MediaProcessingFailedNotification(
+            $message,
+            $event['media'],
+            $event['error']
+        ));
+    }
+}

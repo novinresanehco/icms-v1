@@ -1,0 +1,221 @@
+<?php
+
+namespace App\Core\CMS\Media;
+
+use App\Core\Security\SecurityServiceInterface;
+use App\Core\Validation\ValidationInterface;
+
+class MediaValidator implements MediaValidationInterface
+{
+    private SecurityServiceInterface $security;
+    private ValidationInterface $validator;
+    private AntiVirusScanner $scanner;
+    private ImageAnalyzer $imageAnalyzer;
+    private array $config;
+
+    protected array $allowedMimeTypes = [
+        'image/jpeg',
+        'image/png',
+        'image/gif',
+        'image/webp',
+        'application/pdf',
+        'text/plain',
+        'application/msword',
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+    ];
+
+    protected array $imageValidation = [
+        'maxWidth' => 4096,
+        'maxHeight' => 4096,
+        'maxPixels' => 16777216, // 4096 * 4096
+        'minWidth' => 1,
+        'minHeight' => 1
+    ];
+
+    public function validateFile(UploadedFile $file): ValidationResult
+    {
+        $operationId = uniqid('file_validation_', true);
+
+        try {
+            // Basic file validation
+            $this->validateBasicFileProperties($file);
+
+            // Security validation
+            $this->validateFileSecurity($file);
+
+            // Content-specific validation
+            $this->validateFileContent($file);
+
+            return new ValidationResult(true);
+
+        } catch (\Throwable $e) {
+            $this->handleValidationFailure($e, $file, $operationId);
+            throw $e;
+        }
+    }
+
+    protected function validateBasicFileProperties(UploadedFile $file): void
+    {
+        // Check if file is valid
+        if (!$file->isValid()) {
+            throw new ValidationException('Invalid file upload');
+        }
+
+        // Validate mime type
+        if (!in_array($file->getMimeType(), $this->allowedMimeTypes)) {
+            throw new ValidationException('File type not allowed');
+        }
+
+        // Validate file size
+        if ($file->getSize() > $this->config['max_file_size']) {
+            throw new ValidationException('File size exceeds limit');
+        }
+
+        // Validate file name
+        if (!$this->isValidFilename($file->getClientOriginalName())) {
+            throw new ValidationException('Invalid filename');
+        }
+    }
+
+    protected function validateFileSecurity(UploadedFile $file): void
+    {
+        // Scan for malware
+        if (!$this->scanner->scanFile($file->path())) {
+            throw new SecurityException('File failed security scan');
+        }
+
+        // Check file signature
+        if (!$this->security->validateFileSignature($file)) {
+            throw new SecurityException('Invalid file signature');
+        }
+
+        // Additional security checks for executables
+        if ($this->isExecutable($file)) {
+            throw new SecurityException('Executable files not allowed');
+        }
+
+        // Validate file content matches extension
+        if (!$this->security->validateFileContentType($file)) {
+            throw new SecurityException('File content type mismatch');
+        }
+    }
+
+    protected function validateFileContent(UploadedFile $file): void
+    {
+        $mimeType = $file->getMimeType();
+
+        if (str_starts_with($mimeType, 'image/')) {
+            $this->validateImage($file);
+        } elseif ($mimeType === 'application/pdf') {
+            $this->validatePdf($file);
+        } elseif (str_starts_with($mimeType, 'text/')) {
+            $this->validateTextFile($file);
+        } elseif (str_starts_with($mimeType, 'application/')) {
+            $this->validateDocument($file);
+        }
+    }
+
+    protected function validateImage(UploadedFile $file): void
+    {
+        // Validate image dimensions
+        $dimensions = $this->imageAnalyzer->getDimensions($file->path());
+
+        if (!$dimensions) {
+            throw new ValidationException('Unable to process image');
+        }
+
+        if ($dimensions['width'] > $this->imageValidation['maxWidth'] ||
+            $dimensions['height'] > $this->imageValidation['maxHeight']) {
+            throw new ValidationException('Image dimensions exceed maximum allowed');
+        }
+
+        if ($dimensions['width'] < $this->imageValidation['minWidth'] ||
+            $dimensions['height'] < $this->imageValidation['minHeight']) {
+            throw new ValidationException('Image dimensions below minimum required');
+        }
+
+        if ($dimensions['width'] * $dimensions['height'] > $this->imageValidation['maxPixels']) {
+            throw new ValidationException('Image resolution exceeds maximum allowed');
+        }
+
+        // Validate image content
+        if (!$this->imageAnalyzer->validateContent($file->path())) {
+            throw new ValidationException('Invalid image content');
+        }
+
+        // Check for embedded malware
+        if (!$this->imageAnalyzer->checkForEmbeddedContent($file->path())) {
+            throw new SecurityException('Potentially malicious content detected in image');
+        }
+    }
+
+    protected function validatePdf(UploadedFile $file): void
+    {
+        // Check PDF structure
+        if (!$this->validator->validatePdfStructure($file->path())) {
+            throw new ValidationException('Invalid PDF structure');
+        }
+
+        // Check for malicious content
+        if (!$this->security->validatePdfContent($file->path())) {
+            throw new SecurityException('Potentially malicious content detected in PDF');
+        }
+
+        // Validate PDF version
+        if (!$this->validator->validatePdfVersion($file->path())) {
+            throw new ValidationException('Unsupported PDF version');
+        }
+    }
+
+    protected function validateTextFile(UploadedFile $file): void
+    {
+        // Check encoding
+        if (!$this->validator->validateTextEncoding($file->path())) {
+            throw new ValidationException('Invalid text file encoding');
+        }
+
+        // Check for malicious content
+        if (!$this->security->validateTextContent($file->path())) {
+            throw new SecurityException('Potentially malicious content detected in text file');
+        }
+    }
+
+    protected function validateDocument(UploadedFile $file): void
+    {
+        // Validate document structure
+        if (!$this->validator->validateDocumentStructure($file->path())) {
+            throw new ValidationException('Invalid document structure');
+        }
+
+        // Check for malicious content
+        if (!$this->security->validateDocumentContent($file->path())) {
+            throw new SecurityException('Potentially malicious content detected in document');
+        }
+
+        // Validate macros
+        if (!$this->security->validateDocumentMacros($file->path())) {
+            throw new SecurityException('Potentially dangerous macros detected');
+        }
+    }
+
+    protected function isValidFilename(string $filename): bool
+    {
+        return preg_match('/^[a-zA-Z0-9\-\_\.]+\.[a-zA-Z0-9]{1,4}$/', $filename) === 1;
+    }
+
+    protected function isExecutable(UploadedFile $file): bool
+    {
+        $extension = strtolower($file->getClientOriginalExtension());
+        return in_array($extension, ['exe', 'bat', 'cmd', 'sh', 'php', 'pl', 'py']);
+    }
+
+    protected function handleValidationFailure(
+        \Throwable $e,
+        UploadedFile $file,
+        string $operationId
+    ): void {
+        $this->logger->error('File validation failed', [
+            'operation_id' => $operationId,
+            'filename' => $file->getClientOriginalName(),
+            'mime_type' => $file->getMimeType(),
+            

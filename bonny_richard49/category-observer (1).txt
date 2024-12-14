@@ -1,0 +1,80 @@
+<?php
+
+namespace App\Observers;
+
+use App\Models\Category;
+use App\Core\Events\EventDispatcher;
+use App\Core\Security\SecurityManager;
+use App\Core\Cache\CacheManager;
+use App\Core\Logging\AuditLogger;
+
+class CategoryObserver
+{
+    private EventDispatcher $events;
+    private SecurityManager $security;
+    private CacheManager $cache;
+    private AuditLogger $auditLogger;
+
+    public function __construct(
+        EventDispatcher $events,
+        SecurityManager $security,
+        CacheManager $cache,
+        AuditLogger $auditLogger
+    ) {
+        $this->events = $events;
+        $this->security = $security;
+        $this->cache = $cache;
+        $this->auditLogger = $auditLogger;
+    }
+
+    public function creating(Category $category): void
+    {
+        $this->security->validateOperation('category.creating');
+        $this->events->dispatch('category.creating', $category);
+    }
+
+    public function created(Category $category): void
+    {
+        $this->clearCategoryCache();
+        $this->auditLogger->logModelEvent('category.created', $category);
+        $this->events->dispatch('category.created', $category);
+    }
+
+    public function updating(Category $category): void
+    {
+        $this->security->validateOperation('category.updating');
+        
+        if ($category->isDirty('parent_id')) {
+            $this->validateCategoryMove($category);
+        }
+
+        $this->events->dispatch('category.updating', $category);
+    }
+
+    public function updated(Category $category): void
+    {
+        $this->clearCategoryCache();
+        $this->auditLogger->logModelEvent('category.updated', $category);
+        $this->events->dispatch('category.updated', $category);
+
+        if ($category->wasChanged('parent_id')) {
+            $this->handleCategoryMove($category);
+        }
+    }
+
+    public function deleting(Category $category): void
+    {
+        $this->security->validateOperation('category.deleting');
+        
+        if ($category->hasChildren() || $category->hasContent()) {
+            throw new CategoryException('Cannot delete category with children or content');
+        }
+
+        $this->events->dispatch('category.deleting', $category);
+    }
+
+    public function deleted(Category $category): void
+    {
+        $this->clearCategoryCache();
+        $this->auditLogger->logModelEvent('category.deleted', $category);
+        $this->events->dispatch('category.deleted',

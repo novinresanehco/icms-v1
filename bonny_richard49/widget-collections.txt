@@ -1,0 +1,204 @@
+// app/Core/Widget/Collections/WidgetCollection.php
+<?php
+
+namespace App\Core\Widget\Collections;
+
+use Illuminate\Database\Eloquent\Collection;
+use App\Core\Widget\Models\Widget;
+
+class WidgetCollection extends Collection
+{
+    public function byArea(string $area): self
+    {
+        return $this->filter(fn(Widget $widget) => $widget->area === $area);
+    }
+
+    public function byType(string $type): self
+    {
+        return $this->filter(fn(Widget $widget) => $widget->type === $type);
+    }
+
+    public function active(): self
+    {
+        return $this->filter(fn(Widget $widget) => $widget->is_active);
+    }
+
+    public function sortByOrder(): self
+    {
+        return $this->sortBy('order');
+    }
+
+    public function withCache(): self
+    {
+        return $this->filter(fn(Widget $widget) => $widget->cache_ttl !== null);
+    }
+
+    public function withoutCache(): self
+    {
+        return $this->filter(fn(Widget $widget) => $widget->cache_ttl === null);
+    }
+
+    public function visibleTo($user): self
+    {
+        return $this->filter(fn(Widget $widget) => $widget->isVisibleTo($user));
+    }
+
+    public function withMetrics(): self
+    {
+        return $this->loadMissing('metrics');
+    }
+
+    public function toOptions(): array
+    {
+        return $this->map(fn(Widget $widget) => [
+            'id' => $widget->id,
+            'name' => $widget->name,
+            'type' => $widget->type,
+            'area' => $widget->area
+        ])->toArray();
+    }
+}
+
+// app/Core/Widget/Collections/WidgetMetricsCollection.php
+<?php
+
+namespace App\Core\Widget\Collections;
+
+use Illuminate\Database\Eloquent\Collection;
+
+class WidgetMetricsCollection extends Collection
+{
+    public function averageLoadTime(): float
+    {
+        return $this->avg('load_time');
+    }
+
+    public function maxLoadTime(): float
+    {
+        return $this->max('load_time');
+    }
+
+    public function totalViews(): int
+    {
+        return $this->sum('total_views');
+    }
+
+    public function uniqueViews(): int
+    {
+        return $this->sum('unique_views');
+    }
+
+    public function cacheHitRate(): float
+    {
+        $totalHits = $this->sum('cache_hits');
+        $totalRequests = $totalHits + $this->sum('cache_misses');
+        
+        return $totalRequests > 0 ? ($totalHits / $totalRequests) * 100 : 0;
+    }
+
+    public function byDateRange($startDate, $endDate): self
+    {
+        return $this->whereBetween('recorded_at', [$startDate, $endDate]);
+    }
+
+    public function aggregateByDay(): array
+    {
+        return $this->groupBy(function($metric) {
+            return $metric->recorded_at->format('Y-m-d');
+        })->map(function($group) {
+            return [
+                'views' => $group->sum('total_views'),
+                'unique_views' => $group->sum('unique_views'),
+                'avg_load_time' => $group->avg('load_time'),
+                'cache_hit_rate' => $group->cacheHitRate()
+            ];
+        })->toArray();
+    }
+}
+
+// app/Core/Widget/Collections/WidgetStateCollection.php
+<?php
+
+namespace App\Core\Widget\Collections;
+
+use Illuminate\Database\Eloquent\Collection;
+
+class WidgetStateCollection extends Collection
+{
+    public function latest(): self
+    {
+        return $this->sortByDesc('created_at');
+    }
+
+    public function byType(string $type): self
+    {
+        return $this->filter(fn($state) => $state->type === $type);
+    }
+
+    public function withChanges(): self
+    {
+        return $this->filter(fn($state) => !empty($state->changes));
+    }
+
+    public function byUser($userId): self
+    {
+        return $this->filter(fn($state) => $state->user_id === $userId);
+    }
+
+    public function history(): array
+    {
+        return $this->map(fn($state) => [
+            'id' => $state->id,
+            'type' => $state->type,
+            'changes' => $state->changes,
+            'created_at' => $state->created_at->toIso8601String(),
+            'user_id' => $state->user_id
+        ])->toArray();
+    }
+}
+
+// app/Core/Widget/Collections/WidgetSettingsCollection.php
+<?php
+
+namespace App\Core\Widget\Collections;
+
+use Illuminate\Support\Collection;
+
+class WidgetSettingsCollection extends Collection
+{
+    public function validate(): array
+    {
+        $errors = [];
+
+        foreach ($this->items as $key => $value) {
+            if (!$this->isValidSetting($key, $value)) {
+                $errors[$key] = "Invalid setting value for {$key}";
+            }
+        }
+
+        return $errors;
+    }
+
+    public function merge(array $settings): self
+    {
+        return new static(array_merge($this->items, $settings));
+    }
+
+    public function toDefaults(): array
+    {
+        return array_merge(
+            config('widgets.default_settings', []),
+            $this->items
+        );
+    }
+
+    private function isValidSetting(string $key, $value): bool
+    {
+        return match($key) {
+            'cache_ttl' => is_null($value) || (is_int($value) && $value >= 0),
+            'is_active' => is_bool($value),
+            'order' => is_null($value) || (is_int($value) && $value >= 0),
+            default => true
+        };
+    }
+}

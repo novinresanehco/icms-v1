@@ -1,0 +1,194 @@
+// app/Core/Widget/Adapters/CacheAdapter.php
+<?php
+
+namespace App\Core\Widget\Adapters;
+
+use Illuminate\Cache\Repository;
+use App\Core\Widget\Models\Widget;
+
+class CacheAdapter
+{
+    public function __construct(private Repository $cache)
+    {
+    }
+
+    public function get(Widget $widget, string $key)
+    {
+        return $this->cache->tags($this->getTags($widget))->get($this->getCacheKey($widget, $key));
+    }
+
+    public function put(Widget $widget, string $key, $value, ?int $ttl = null): void
+    {
+        $this->cache->tags($this->getTags($widget))->put(
+            $this->getCacheKey($widget, $key),
+            $value,
+            $ttl ?? $this->getTtl($widget)
+        );
+    }
+
+    public function forget(Widget $widget, string $key): void
+    {
+        $this->cache->tags($this->getTags($widget))->forget($this->getCacheKey($widget, $key));
+    }
+
+    public function flush(Widget $widget): void
+    {
+        $this->cache->tags($this->getTags($widget))->flush();
+    }
+
+    protected function getTags(Widget $widget): array
+    {
+        return [
+            'widgets',
+            "widget:{$widget->id}",
+            "area:{$widget->area}",
+            "type:{$widget->type}"
+        ];
+    }
+
+    protected function getCacheKey(Widget $widget, string $key): string
+    {
+        return "widget:{$widget->id}:{$key}";
+    }
+
+    protected function getTtl(Widget $widget): int
+    {
+        return $widget->cache_ttl ?? config('widgets.cache.ttl', 3600);
+    }
+}
+
+// app/Core/Widget/Adapters/StorageAdapter.php
+<?php
+
+namespace App\Core\Widget\Adapters;
+
+use Illuminate\Support\Facades\Storage;
+use App\Core\Widget\Models\Widget;
+
+class StorageAdapter
+{
+    private string $disk;
+
+    public function __construct(string $disk = 'local')
+    {
+        $this->disk = $disk;
+    }
+
+    public function store(Widget $widget, string $path, $contents): string
+    {
+        return Storage::disk($this->disk)->put($this->getPath($widget, $path), $contents);
+    }
+
+    public function get(Widget $widget, string $path)
+    {
+        return Storage::disk($this->disk)->get($this->getPath($widget, $path));
+    }
+
+    public function delete(Widget $widget, string $path): bool
+    {
+        return Storage::disk($this->disk)->delete($this->getPath($widget, $path));
+    }
+
+    public function exists(Widget $widget, string $path): bool
+    {
+        return Storage::disk($this->disk)->exists($this->getPath($widget, $path));
+    }
+
+    public function url(Widget $widget, string $path): string
+    {
+        return Storage::disk($this->disk)->url($this->getPath($widget, $path));
+    }
+
+    protected function getPath(Widget $widget, string $path): string
+    {
+        return "widgets/{$widget->id}/{$path}";
+    }
+}
+
+// app/Core/Widget/Adapters/DatabaseAdapter.php
+<?php
+
+namespace App\Core\Widget\Adapters;
+
+use App\Core\Widget\Models\Widget;
+use Illuminate\Database\DatabaseManager;
+use Illuminate\Support\Collection;
+
+class DatabaseAdapter
+{
+    public function __construct(private DatabaseManager $db)
+    {
+    }
+
+    public function findById(int $id): ?Widget
+    {
+        return Widget::find($id);
+    }
+
+    public function findByIdentifier(string $identifier): ?Widget
+    {
+        return Widget::where('identifier', $identifier)->first();
+    }
+
+    public function findByArea(string $area): Collection
+    {
+        return Widget::where('area', $area)->orderBy('order')->get();
+    }
+
+    public function create(array $data): Widget
+    {
+        return Widget::create($data);
+    }
+
+    public function update(Widget $widget, array $data): bool
+    {
+        return $widget->update($data);
+    }
+
+    public function delete(Widget $widget): bool
+    {
+        return $widget->delete();
+    }
+
+    public function transaction(callable $callback)
+    {
+        return $this->db->transaction($callback);
+    }
+}
+
+// app/Core/Widget/Adapters/MetricsAdapter.php
+<?php
+
+namespace App\Core\Widget\Adapters;
+
+use App\Core\Widget\Models\Widget;
+use App\Core\Widget\Models\WidgetMetric;
+use Carbon\Carbon;
+
+class MetricsAdapter
+{
+    public function recordMetric(Widget $widget, string $key, $value): WidgetMetric
+    {
+        return WidgetMetric::create([
+            'widget_id' => $widget->id,
+            'metric_key' => $key,
+            'metric_value' => $value,
+            'recorded_at' => Carbon::now()
+        ]);
+    }
+
+    public function getMetrics(Widget $widget, Carbon $start, Carbon $end): array
+    {
+        return WidgetMetric::where('widget_id', $widget->id)
+            ->whereBetween('recorded_at', [$start, $end])
+            ->get()
+            ->groupBy('metric_key')
+            ->map(fn($metrics) => $metrics->avg('metric_value'))
+            ->toArray();
+    }
+
+    public function deleteMetrics(Widget $widget): bool
+    {
+        return WidgetMetric::where('widget_id', $widget->id)->delete();
+    }
+}

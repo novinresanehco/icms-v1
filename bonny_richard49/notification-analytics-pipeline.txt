@@ -1,0 +1,140 @@
+<?php
+
+namespace App\Core\Notification\Analytics\Pipeline;
+
+class AnalyticsPipeline
+{
+    private array $stages = [];
+    private array $hooks = [];
+    private array $metrics = [];
+
+    public function addStage(string $name, callable $processor, array $config = []): void
+    {
+        $this->stages[$name] = [
+            'processor' => $processor,
+            'config' => array_merge([
+                'required' => true,
+                'timeout' => 30,
+                'retry_count' => 3
+            ], $config)
+        ];
+    }
+
+    public function addHook(string $event, callable $hook): void
+    {
+        if (!isset($this->hooks[$event])) {
+            $this->hooks[$event] = [];
+        }
+        $this->hooks[$event][] = $hook;
+    }
+
+    public function process(array $data): array
+    {
+        $context = ['start_time' => microtime(true)];
+        $result = $data;
+
+        try {
+            $this->triggerHooks('pipeline.start', $context);
+
+            foreach ($this->stages as $name => $stage) {
+                $result = $this->processStage($name, $result, $context);
+            }
+
+            $this->triggerHooks('pipeline.complete', array_merge($context, [
+                'result' => $result,
+                'duration' => microtime(true) - $context['start_time']
+            ]));
+
+            return $result;
+        } catch (\Exception $e) {
+            $this->triggerHooks('pipeline.error', array_merge($context, [
+                'error' => $e->getMessage()
+            ]));
+            throw $e;
+        }
+    }
+
+    public function getMetrics(): array
+    {
+        return $this->metrics;
+    }
+
+    private function processStage(string $name, array $data, array &$context): array
+    {
+        $stage = $this->stages[$name];
+        $startTime = microtime(true);
+
+        try {
+            $this->triggerHooks('stage.start', array_merge($context, [
+                'stage' => $name
+            ]));
+
+            $result = $this->executeWithRetry(
+                $stage['processor'],
+                $data,
+                $stage['config']['retry_count']
+            );
+
+            $duration = microtime(true) - $startTime;
+            $this->recordMetrics($name, $duration, true);
+
+            $this->triggerHooks('stage.complete', array_merge($context, [
+                'stage' => $name,
+                'duration' => $duration
+            ]));
+
+            return $result;
+        } catch (\Exception $e) {
+            $duration = microtime(true) - $startTime;
+            $this->recordMetrics($name, $duration, false);
+
+            if ($stage['config']['required']) {
+                throw $e;
+            }
+
+            $this->triggerHooks('stage.error', array_merge($context, [
+                'stage' => $name,
+                'error' => $e->getMessage()
+            ]));
+
+            return $data;
+        }
+    }
+
+    private function executeWithRetry(callable $processor, array $data, int $retries): array
+    {
+        $attempts = 0;
+        $lastException = null;
+
+        while ($attempts < $retries) {
+            try {
+                return $processor($data);
+            } catch (\Exception $e) {
+                $lastException = $e;
+                $attempts++;
+                if ($attempts < $retries) {
+                    sleep(pow(2, $attempts));
+                }
+            }
+        }
+
+        throw $lastException;
+    }
+
+    private function triggerHooks(string $event, array $context): void
+    {
+        if (!isset($this->hooks[$event])) {
+            return;
+        }
+
+        foreach ($this->hooks[$event] as $hook) {
+            try {
+                $hook($context);
+            } catch (\Exception $e) {
+                // Log hook error but continue processing
+                error_log("Hook error in {$event}: " . $e->getMessage());
+            }
+        }
+    }
+
+    private function recordMetrics(string $stage, float

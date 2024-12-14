@@ -1,0 +1,57 @@
+<?php
+
+namespace App\Core\Notification\Analytics\Archiving;
+
+class AnalyticsArchiver
+{
+    private string $archivePath;
+    private array $config;
+    private array $compressors;
+
+    public function __construct(string $archivePath, array $config = [])
+    {
+        $this->archivePath = $archivePath;
+        $this->config = array_merge([
+            'compression' => 'gzip',
+            'retention_days' => 90,
+            'batch_size' => 1000
+        ], $config);
+        $this->initializeCompressors();
+    }
+
+    public function archive(array $data, string $type): string
+    {
+        $archiveId = $this->generateArchiveId($type);
+        $archiveFile = $this->getArchiveFilePath($archiveId);
+        
+        $compressed = $this->compress($data);
+        $metadata = $this->generateMetadata($type, $data);
+        
+        $this->writeArchive($archiveFile, $compressed, $metadata);
+        $this->cleanup();
+        
+        return $archiveId;
+    }
+
+    public function retrieve(string $archiveId): ?array
+    {
+        $archiveFile = $this->getArchiveFilePath($archiveId);
+        
+        if (!file_exists($archiveFile)) {
+            return null;
+        }
+
+        return $this->readArchive($archiveFile);
+    }
+
+    private function generateArchiveId(string $type): string
+    {
+        return sprintf(
+            '%s_%s_%s',
+            $type,
+            date('Ymd_His'),
+            uniqid()
+        );
+    }
+
+    

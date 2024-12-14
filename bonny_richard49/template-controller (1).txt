@@ -1,0 +1,128 @@
+<?php
+
+namespace App\Http\Controllers;
+
+use App\Services\TemplateService;
+use App\Core\Security\SecurityManager;
+use App\Core\Performance\PerformanceMonitor;
+use App\Http\Requests\TemplateRequest;
+use Illuminate\Http\JsonResponse;
+
+class TemplateController extends Controller
+{
+    private TemplateService $templates;
+    private SecurityManager $security;
+    private PerformanceMonitor $monitor;
+
+    public function __construct(
+        TemplateService $templates,
+        SecurityManager $security,
+        PerformanceMonitor $monitor
+    ) {
+        $this->templates = $templates;
+        $this->security = $security;
+        $this->monitor = $monitor;
+    }
+
+    public function render(TemplateRequest $request): JsonResponse
+    {
+        $monitoringId = $this->monitor->startOperation('template.render');
+
+        try {
+            $this->security->validateOperation('template.render');
+            
+            $rendered = $this->templates->render(
+                $request->get('template'),
+                $request->get('data', [])
+            );
+            
+            $metrics = $this->monitor->endOperation($monitoringId);
+            
+            return response()->json([
+                'status' => 'success',
+                'data' => ['content' => $rendered],
+                'metrics' => $metrics
+            ]);
+
+        } catch (\Exception $e) {
+            $this->monitor->endOperation($monitoringId);
+            throw $e;
+        }
+    }
+
+    public function compile(TemplateRequest $request): JsonResponse
+    {
+        $monitoringId = $this->monitor->startOperation('template.compile');
+
+        try {
+            $this->security->validateOperation('template.compile');
+            
+            $compiled = $this->templates->compile(
+                $request->get('template'),
+                $request->get('data', [])
+            );
+            
+            $metrics = $this->monitor->endOperation($monitoringId);
+            
+            return response()->json([
+                'status' => 'success',
+                'data' => ['content' => $compiled],
+                'metrics' => $metrics
+            ]);
+
+        } catch (\Exception $e) {
+            $this->monitor->endOperation($monitoringId);
+            throw $e;
+        }
+    }
+
+    public function validate(TemplateRequest $request): JsonResponse
+    {
+        $monitoringId = $this->monitor->startOperation('template.validate');
+
+        try {
+            $this->security->validateOperation('template.validate');
+            
+            $isValid = $this->templates->validateSyntax(
+                $request->get('template')
+            );
+            
+            $metrics = $this->monitor->endOperation($monitoringId);
+            
+            return response()->json([
+                'status' => 'success',
+                'data' => ['valid' => $isValid],
+                'metrics' => $metrics
+            ]);
+
+        } catch (\Exception $e) {
+            $this->monitor->endOperation($monitoringId);
+            throw $e;
+        }
+    }
+
+    public function clearCache(TemplateRequest $request): JsonResponse
+    {
+        $monitoringId = $this->monitor->startOperation('template.cache_clear');
+
+        try {
+            $this->security->validateOperation('template.cache_clear');
+            
+            $this->templates->clearCache(
+                $request->get('template')
+            );
+            
+            $metrics = $this->monitor->endOperation($monitoringId);
+            
+            return response()->json([
+                'status' => 'success',
+                'data' => ['cleared' => true],
+                'metrics' => $metrics
+            ]);
+
+        } catch (\Exception $e) {
+            $this->monitor->endOperation($monitoringId);
+            throw $e;
+        }
+    }
+}

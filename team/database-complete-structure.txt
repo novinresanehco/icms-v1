@@ -1,0 +1,149 @@
+# ساختار کامل فایل‌های دیتابیس CMS
+
+## /database/schema/full_schema.sql
+```sql
+/*!40101 SET @OLD_CHARACTER_SET_CLIENT=@@CHARACTER_SET_CLIENT */;
+/*!40101 SET @OLD_CHARACTER_SET_RESULTS=@@CHARACTER_SET_RESULTS */;
+/*!40101 SET @OLD_COLLATION_CONNECTION=@@COLLATION_CONNECTION */;
+/*!40101 SET NAMES utf8mb4 */;
+
+-- -------------------------------------------------
+-- بخش 1: هسته اصلی سیستم
+-- -------------------------------------------------
+
+-- جدول کاربران
+CREATE TABLE `users` (
+    `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+    `username` VARCHAR(100) NOT NULL,
+    `email` VARCHAR(191) NOT NULL,
+    `mobile` VARCHAR(20) DEFAULT NULL,
+    `password` VARCHAR(255) NOT NULL,
+    `full_name` VARCHAR(255) DEFAULT NULL,
+    `avatar` VARCHAR(255) DEFAULT NULL,
+    `status` ENUM('active', 'inactive', 'banned', 'pending') NOT NULL DEFAULT 'pending',
+    `email_verified_at` TIMESTAMP NULL DEFAULT NULL,
+    `mobile_verified_at` TIMESTAMP NULL DEFAULT NULL,
+    `two_factor_enabled` BOOLEAN DEFAULT FALSE,
+    `two_factor_secret` VARCHAR(255) DEFAULT NULL,
+    `remember_token` VARCHAR(100) DEFAULT NULL,
+    `last_login_at` TIMESTAMP NULL DEFAULT NULL,
+    `last_login_ip` VARCHAR(45) DEFAULT NULL,
+    `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    `updated_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    `deleted_at` TIMESTAMP NULL DEFAULT NULL,
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `users_email_unique` (`email`),
+    UNIQUE KEY `users_username_unique` (`username`),
+    KEY `users_status_index` (`status`),
+    KEY `users_created_at_index` (`created_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- جدول نقش‌ها
+CREATE TABLE `roles` (
+    `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+    `name` VARCHAR(100) NOT NULL,
+    `slug` VARCHAR(100) NOT NULL,
+    `description` TEXT,
+    `is_system` BOOLEAN DEFAULT FALSE,
+    `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    `updated_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `roles_slug_unique` (`slug`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- جدول مجوزها
+CREATE TABLE `permissions` (
+    `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+    `name` VARCHAR(100) NOT NULL,
+    `slug` VARCHAR(100) NOT NULL,
+    `description` TEXT,
+    `module` VARCHAR(100) DEFAULT NULL,
+    `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `permissions_slug_unique` (`slug`),
+    KEY `permissions_module_index` (`module`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+[... ادامه تمام جداول از بخش‌های قبلی با همان جزئیات کامل ...]
+
+-- -------------------------------------------------
+-- بخش 6: ماژول‌های آینده
+-- -------------------------------------------------
+
+[... تمام جداول مربوط به بخش‌های آینده با همان جزئیات کامل ...]
+```
+
+## /database/schema/initial_schema.sql
+```sql
+-- این فایل شامل ساختار اولیه برای فاز اول است
+-- شامل جداول core, users, permissions, content و media
+
+[... کپی دقیق جداول مربوطه از full_schema.sql ...]
+```
+
+## /database/schema/future_schema.sql
+```sql
+-- این فایل شامل ساختار جداول برای فازهای آینده است
+-- شامل جداول مربوط به فروشگاه، دوره‌ها، پیام‌رسانی و ...
+
+[... کپی دقیق جداول مربوط به بخش‌های آینده از full_schema.sql ...]
+```
+
+## /docs/database/SCHEMA.md
+```markdown
+# ساختار دیتابیس CMS
+
+## مقدمه
+این سند شامل توضیحات فنی کامل در مورد ساختار دیتابیس CMS است.
+
+## بخش‌های اصلی
+1. هسته اصلی سیستم
+   - مدیریت کاربران
+   - سیستم مجوزها
+   - تنظیمات سیستم
+
+2. مدیریت محتوا
+   - انواع محتوا
+   - دسته‌بندی و تگ‌ها
+   - نسخه‌بندی محتوا
+
+[... توضیحات کامل هر بخش با جزئیات فنی ...]
+
+## روابط کلیدی
+[دیاگرام و توضیح روابط مهم بین جداول]
+
+## نکات پیاده‌سازی
+[نکات مهم در مورد پیاده‌سازی و استفاده از هر بخش]
+```
+
+## /docs/database/RELATIONSHIPS.md
+```markdown
+# روابط بین جداول دیتابیس CMS
+
+## روابط اصلی
+1. رابطه کاربران و نقش‌ها
+   - رابطه چند به چند از طریق جدول role_user
+   - هر کاربر می‌تواند چندین نقش داشته باشد
+   - هر نقش می‌تواند به چندین کاربر تعلق داشته باشد
+
+[... توضیح کامل تمام روابط با دیاگرام و مثال ...]
+```
+
+## /docs/database/MIGRATIONS.md
+```markdown
+# راهنمای مهاجرت دیتابیس
+
+## مراحل نصب اولیه
+1. ایجاد دیتابیس جدید
+2. تنظیم فایل .env
+3. اجرای مهاجرت‌ها
+
+## دستورات اصلی
+```bash
+php artisan migrate           # اجرای مهاجرت‌ها
+php artisan migrate:fresh    # بازسازی کامل دیتابیس
+php artisan db:seed         # اضافه کردن داده‌های اولیه
+```
+
+[... توضیحات کامل در مورد مدیریت مهاجرت‌ها ...]
+```

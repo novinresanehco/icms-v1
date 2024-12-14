@@ -1,0 +1,191 @@
+// app/Core/Widget/Presenters/WidgetPresenter.php
+<?php
+
+namespace App\Core\Widget\Presenters;
+
+use App\Core\Widget\Models\Widget;
+use Illuminate\Support\Str;
+
+class WidgetPresenter
+{
+    public function __construct(private Widget $widget)
+    {
+    }
+
+    public function name(): string
+    {
+        return Str::title($this->widget->name);
+    }
+
+    public function type(): string
+    {
+        return Str::ucfirst($this->widget->type);
+    }
+
+    public function area(): string
+    {
+        return Str::ucfirst($this->widget->area);
+    }
+
+    public function status(): string
+    {
+        return $this->widget->is_active ? 'Active' : 'Inactive';
+    }
+
+    public function statusClass(): string
+    {
+        return $this->widget->is_active ? 'bg-green-500' : 'bg-red-500';
+    }
+
+    public function createdAt(): string
+    {
+        return $this->widget->created_at->format('M d, Y H:i');
+    }
+
+    public function updatedAt(): string
+    {
+        return $this->widget->updated_at->format('M d, Y H:i');
+    }
+
+    public function cacheTime(): string
+    {
+        if (!$this->widget->cache_ttl) {
+            return 'No caching';
+        }
+
+        return sprintf('%d minutes', $this->widget->cache_ttl / 60);
+    }
+
+    public function visibilityRules(): string
+    {
+        if (empty($this->widget->visibility_rules)) {
+            return 'No visibility rules';
+        }
+
+        return sprintf(
+            '%d rule(s) (%s)',
+            count($this->widget->visibility_rules['conditions'] ?? []),
+            $this->widget->visibility_rules['operator'] ?? 'and'
+        );
+    }
+
+    public function permissions(): string
+    {
+        if (empty($this->widget->permissions)) {
+            return 'No permissions set';
+        }
+
+        return sprintf('%d permission(s)', count($this->widget->permissions));
+    }
+
+    public function settings(): array
+    {
+        return collect($this->widget->settings ?? [])
+            ->map(function ($value, $key) {
+                return [
+                    'label' => Str::title(str_replace('_', ' ', $key)),
+                    'value' => $this->formatSettingValue($value)
+                ];
+            })
+            ->values()
+            ->toArray();
+    }
+
+    private function formatSettingValue($value): string
+    {
+        if (is_bool($value)) {
+            return $value ? 'Yes' : 'No';
+        }
+
+        if (is_array($value)) {
+            return implode(', ', $value);
+        }
+
+        return (string) $value;
+    }
+}
+
+// app/Core/Widget/Presenters/WidgetMetricsPresenter.php
+<?php
+
+namespace App\Core\Widget\Presenters;
+
+class WidgetMetricsPresenter
+{
+    public function __construct(private array $metrics)
+    {
+    }
+
+    public function totalViews(): string
+    {
+        return number_format($this->metrics['views']['total'] ?? 0);
+    }
+
+    public function uniqueViews(): string
+    {
+        return number_format($this->metrics['views']['unique'] ?? 0);
+    }
+
+    public function averageLoadTime(): string
+    {
+        $time = $this->metrics['performance']['load_time']['average'] ?? 0;
+        return sprintf('%.2f ms', $time);
+    }
+
+    public function peakMemoryUsage(): string
+    {
+        $memory = $this->metrics['performance']['memory_usage']['peak'] ?? 0;
+        return sprintf('%.2f MB', $memory);
+    }
+
+    public function cacheHitRate(): string
+    {
+        $rate = $this->metrics['cache']['hit_rate'] ?? 0;
+        return sprintf('%.1f%%', $rate);
+    }
+
+    public function errorRate(): string
+    {
+        $rate = $this->metrics['performance']['error_rate'] ?? 0;
+        return sprintf('%.2f%%', $rate);
+    }
+
+    public function uptime(): string
+    {
+        $uptime = $this->metrics['performance']['uptime'] ?? 100;
+        return sprintf('%.2f%%', $uptime);
+    }
+
+    public function interactions(): array
+    {
+        return collect($this->metrics['interactions'] ?? [])
+            ->map(function ($count, $type) {
+                return [
+                    'type' => $type,
+                    'count' => number_format($count)
+                ];
+            })
+            ->values()
+            ->toArray();
+    }
+
+    public function trendIndicator(): string
+    {
+        $trend = $this->metrics['trend'] ?? 'stable';
+        return match($trend) {
+            'up' => '↑',
+            'down' => '↓',
+            default => '→'
+        };
+    }
+
+    public function trendClass(): string
+    {
+        $trend = $this->metrics['trend'] ?? 'stable';
+        return match($trend) {
+            'up' => 'text-green-500',
+            'down' => 'text-red-500',
+            default => 'text-gray-500'
+        };
+    }
+}

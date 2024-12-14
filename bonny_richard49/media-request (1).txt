@@ -1,0 +1,72 @@
+<?php
+
+namespace App\Http\Requests;
+
+use Illuminate\Foundation\Http\FormRequest;
+use App\Core\Validation\ValidationService;
+
+class MediaRequest extends FormRequest
+{
+    protected ValidationService $validator;
+
+    public function __construct(ValidationService $validator)
+    {
+        $this->validator = $validator;
+    }
+
+    public function authorize(): bool
+    {
+        return true;
+    }
+
+    public function rules(): array
+    {
+        return match ($this->method()) {
+            'POST' => $this->uploadRules(),
+            'PUT', 'PATCH' => $this->updateRules(),
+            default => []
+        };
+    }
+
+    protected function uploadRules(): array
+    {
+        return [
+            'file' => [
+                'required',
+                'file',
+                'max:' . config('media.max_file_size', 50 * 1024),
+                'mimes:' . implode(',', config('media.allowed_mimes')),
+            ],
+            'metadata' => 'sometimes|array',
+            'metadata.title' => 'nullable|string|max:255',
+            'metadata.description' => 'nullable|string',
+            'metadata.alt_text' => 'nullable|string|max:255',
+            'metadata.author' => 'nullable|string|max:255',
+            'metadata.copyright' => 'nullable|string|max:255'
+        ];
+    }
+
+    protected function updateRules(): array
+    {
+        return [
+            'metadata' => 'required|array',
+            'metadata.title' => 'nullable|string|max:255',
+            'metadata.description' => 'nullable|string',
+            'metadata.alt_text' => 'nullable|string|max:255',
+            'metadata.author' => 'nullable|string|max:255',
+            'metadata.copyright' => 'nullable|string|max:255'
+        ];
+    }
+
+    public function messages(): array
+    {
+        return [
+            'file.required' => 'File is required',
+            'file.file' => 'Invalid file upload',
+            'file.max' => 'File size exceeds maximum limit',
+            'file.mimes' => 'Unsupported file type',
+            'metadata.array' => 'Invalid metadata format',
+            'metadata.*.max' => 'Metadata field exceeds maximum length'
+        ];
+    }
+}

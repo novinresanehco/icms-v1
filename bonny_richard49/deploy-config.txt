@@ -1,0 +1,127 @@
+# Production Server Configuration
+
+server {
+    listen 443 ssl http2;
+    server_name secure-cms.com;
+    root /var/www/secure-cms/public;
+
+    # SSL Configuration
+    ssl_certificate /etc/ssl/certs/secure-cms.crt;
+    ssl_certificate_key /etc/ssl/private/secure-cms.key;
+    ssl_session_timeout 1d;
+    ssl_session_cache shared:SSL:50m;
+    ssl_session_tickets off;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305:DHE-RSA-AES128-GCM-SHA256:DHE-RSA-AES256-GCM-SHA384;
+    ssl_prefer_server_ciphers off;
+    
+    # HSTS
+    add_header Strict-Transport-Security "max-age=63072000" always;
+
+    # Security Headers
+    add_header X-Frame-Options "DENY" always;
+    add_header X-XSS-Protection "1; mode=block" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+    add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'self'; upgrade-insecure-requests;" always;
+
+    # Optimization
+    location ~* \.(jpg|jpeg|gif|png|css|js|ico|xml)$ {
+        access_log off;
+        log_not_found off;
+        expires 30d;
+        add_header Cache-Control "public, no-transform";
+    }
+
+    # PHP-FPM Configuration
+    location / {
+        try_files $uri $uri/ /index.php?$query_string;
+        
+        location ~ \.php$ {
+            fastcgi_split_path_info ^(.+\.php)(/.+)$;
+            fastcgi_pass unix:/var/run/php-fpm.sock;
+            fastcgi_index index.php;
+            include fastcgi_params;
+            fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+            fastcgi_param PATH_INFO $fastcgi_path_info;
+            fastcgi_intercept_errors on;
+            fastcgi_buffer_size 16k;
+            fastcgi_buffers 4 16k;
+            fastcgi_read_timeout 300;
+        }
+    }
+
+    # Deny access to sensitive files
+    location ~ /\.(?!well-known) {
+        deny all;
+        access_log off;
+        log_not_found off;
+    }
+    
+    # Compression
+    gzip on;
+    gzip_vary on;
+    gzip_min_length 1000;
+    gzip_proxied any;
+    gzip_types text/plain text/css text/xml application/json application/javascript application/xml+rss text/javascript application/x-httpd-php image/svg+xml;
+    gzip_disable "MSIE [1-6]\.";
+}
+
+# PHP-FPM Configuration
+[www]
+user = secure-cms
+group = secure-cms
+listen = /var/run/php-fpm.sock
+listen.owner = secure-cms
+listen.group = secure-cms
+listen.mode = 0660
+
+pm = dynamic
+pm.max_children = 50
+pm.start_servers = 5
+pm.min_spare_servers = 5
+pm.max_spare_servers = 35
+pm.max_requests = 500
+
+php_admin_value[error_log] = /var/log/secure-cms/php-fpm-error.log
+php_admin_flag[log_errors] = on
+php_admin_value[memory_limit] = 256M
+php_admin_value[max_execution_time] = 300
+php_admin_value[max_input_time] = 300
+php_admin_value[post_max_size] = 50M
+php_admin_value[upload_max_filesize] = 50M
+
+# Redis Configuration
+requirepass "strong_redis_password"
+maxmemory 512mb
+maxmemory-policy allkeys-lru
+appendonly yes
+appendfsync everysec
+
+save 900 1
+save 300 10
+save 60 10000
+
+# Supervisor Configuration
+[program:secure-cms-queue]
+process_name=%(program_name)s_%(process_num)02d
+command=php /var/www/secure-cms/artisan queue:work redis --sleep=3 --tries=3 --max-time=3600
+autostart=true
+autorestart=true
+stopasgroup=true
+killasgroup=true
+user=secure-cms
+numprocs=8
+redirect_stderr=true
+stdout_logfile=/var/log/secure-cms/worker.log
+stopwaitsecs=3600
+
+[program:secure-cms-schedule]
+process_name=%(program_name)s_%(process_num)02d
+command=php /var/www/secure-cms/artisan schedule:work
+autostart=true
+autorestart=true
+user=secure-cms
+numprocs=1
+redirect_stderr=true
+stdout_logfile=/var/log/secure-cms/scheduler.log

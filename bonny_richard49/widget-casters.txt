@@ -1,0 +1,153 @@
+// app/Core/Widget/Casters/WidgetSettingsCaster.php
+<?php
+
+namespace App\Core\Widget\Casters;
+
+use Illuminate\Contracts\Database\Eloquent\CastsAttributes;
+
+class WidgetSettingsCaster implements CastsAttributes
+{
+    public function get($model, string $key, $value, array $attributes)
+    {
+        if (empty($value)) {
+            return [];
+        }
+
+        $settings = json_decode($value, true);
+
+        return array_merge(
+            $this->getDefaultSettings(),
+            $settings ?? []
+        );
+    }
+
+    public function set($model, string $key, $value, array $attributes)
+    {
+        if (empty($value)) {
+            return null;
+        }
+
+        return json_encode($value);
+    }
+
+    private function getDefaultSettings(): array
+    {
+        return [
+            'show_title' => true,
+            'cache' => true,
+            'wrapper_class' => 'widget'
+        ];
+    }
+}
+
+// app/Core/Widget/Casters/WidgetVisibilityRulesCaster.php
+<?php
+
+namespace App\Core\Widget\Casters;
+
+use Illuminate\Contracts\Database\Eloquent\CastsAttributes;
+
+class WidgetVisibilityRulesCaster implements CastsAttributes
+{
+    public function get($model, string $key, $value, array $attributes)
+    {
+        if (empty($value)) {
+            return [
+                'conditions' => [],
+                'operator' => 'and'
+            ];
+        }
+
+        return json_decode($value, true);
+    }
+
+    public function set($model, string $key, $value, array $attributes)
+    {
+        if (empty($value)) {
+            return null;
+        }
+
+        if (!isset($value['operator'])) {
+            $value['operator'] = 'and';
+        }
+
+        return json_encode($value);
+    }
+}
+
+// app/Core/Widget/Casters/WidgetPermissionsCaster.php
+<?php
+
+namespace App\Core\Widget\Casters;
+
+use Illuminate\Contracts\Database\Eloquent\CastsAttributes;
+
+class WidgetPermissionsCaster implements CastsAttributes
+{
+    public function get($model, string $key, $value, array $attributes)
+    {
+        if (empty($value)) {
+            return [];
+        }
+
+        return json_decode($value, true);
+    }
+
+    public function set($model, string $key, $value, array $attributes)
+    {
+        if (empty($value)) {
+            return null;
+        }
+
+        return json_encode($value);
+    }
+}
+
+// app/Core/Widget/Casters/WidgetMetadataCaster.php
+<?php
+
+namespace App\Core\Widget\Casters;
+
+use Illuminate\Contracts\Database\Eloquent\CastsAttributes;
+
+class WidgetMetadataCaster implements CastsAttributes
+{
+    public function get($model, string $key, $value, array $attributes)
+    {
+        if (empty($value)) {
+            return [];
+        }
+
+        return json_decode($value, true);
+    }
+
+    public function set($model, string $key, $value, array $attributes)
+    {
+        if (empty($value)) {
+            return null;
+        }
+
+        return json_encode($value);
+    }
+}
+
+// app/Core/Widget/Casters/WidgetMetricsCaster.php
+<?php
+
+namespace App\Core\Widget\Casters;
+
+use Illuminate\Contracts\Database\Eloquent\CastsAttributes;
+
+class WidgetMetricsCaster implements CastsAttributes
+{
+    public function get($model, string $key, $value, array $attributes)
+    {
+        if (empty($value)) {
+            return [
+                'views' => 0,
+                'interactions' => 0,
+                'performance' => []
+            ];
+        }
+
+        return json_decode($

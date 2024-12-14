@@ -1,0 +1,105 @@
+<?php
+
+namespace App\Core\Security;
+
+use Psr\Log\LoggerInterface;
+use Illuminate\Support\Facades\DB;
+use App\Core\Exceptions\AuditException;
+
+class AuditLogger
+{
+    private LoggerInterface $logger;
+    private array $config;
+
+    private const BATCH_SIZE = 100;
+    private const RETENTION_DAYS = 90;
+
+    public function __construct(LoggerInterface $logger)
+    {
+        $this->logger = $logger;
+        $this->config = config('audit');
+    }
+
+    public function logSecurityEvent(string $event, array $data): void
+    {
+        try {
+            DB::beginTransaction();
+
+            $entry = new AuditEntry([
+                'event' => $event,
+                'data' => $this->sanitizeData($data),
+                'ip_address' => request()->ip(),
+                'user_agent' => request()->userAgent(),
+                'timestamp' => now(),
+                'hash' => $this->generateHash($event, $data)
+            ]);
+
+            $entry->save();
+            
+            if ($this->isHighRiskEvent($event)) {
+                $this->notifySecurityTeam($entry);
+            }
+
+            DB::commit();
+
+        } catch (\Exception $e) {
+            DB::rollBack();
+            $this->handleError('Failed to log security event', $e);
+        }
+    }
+
+    public function logAccessAttempt(array $data): void
+    {
+        $this->logSecurityEvent('access_attempt', $data);
+    }
+
+    public function logAuthenticationSuccess(array $data): void
+    {
+        $this->logSecurityEvent('authentication_success', $data);
+    }
+
+    public function logAuthenticationFailure(array $data): void
+    {
+        $this->logSecurityEvent('authentication_failure', $data);
+    }
+
+    public function logSystemEvent(string $event, array $data): void
+    {
+        try {
+            DB::beginTransaction();
+
+            $entry = new AuditEntry([
+                'event' => $event,
+                'data' => $this->sanitizeData($data),
+                'timestamp' => now(),
+                'hash' => $this->generateHash($event, $data)
+            ]);
+
+            $entry->save();
+            DB::commit();
+
+        } catch (\Exception $e) {
+            DB::rollBack();
+            $this->handleError('Failed to log system event', $e);
+        }
+    }
+
+    public function exportAuditLog(array $criteria): array
+    {
+        try {
+            $query = AuditEntry::query();
+
+            if (isset($criteria['start_date'])) {
+                $query->where('timestamp', '>=', $criteria['start_date']);
+            }
+
+            if (isset($criteria['end_date'])) {
+                $query->where('timestamp', '<=', $criteria['end_date']);
+            }
+
+            if (isset($criteria['event'])) {
+                $query->where('event', $criteria['event']);
+            }
+
+            $logs = [];
+            $query->chunk(

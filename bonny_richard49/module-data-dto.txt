@@ -1,0 +1,65 @@
+<?php
+
+namespace App\Core\Module\DTO;
+
+use App\Core\Shared\DTO\DataTransferObject;
+use JsonSerializable;
+
+class ModuleData extends DataTransferObject implements JsonSerializable
+{
+    public string $name;
+    public string $identifier;
+    public string $description;
+    public string $version;
+    public array $dependencies;
+    public array $hooks;
+    public array $providers;
+    public ?array $config;
+    public array $migrations;
+    public array $routes;
+    public array $services;
+    public array $permissions;
+    public ?array $menu;
+    public ?array $widgets;
+
+    public function __construct(array $data)
+    {
+        $this->name = $data['name'];
+        $this->identifier = $data['identifier'];
+        $this->description = $data['description'];
+        $this->version = $data['version'];
+        $this->dependencies = $data['dependencies'] ?? [];
+        $this->hooks = $data['hooks'] ?? [];
+        $this->providers = $data['providers'] ?? [];
+        $this->config = $data['config'] ?? [];
+        $this->migrations = $data['migrations'] ?? [];
+        $this->routes = $data['routes'] ?? [];
+        $this->services = $data['services'] ?? [];
+        $this->permissions = $data['permissions'] ?? [];
+        $this->menu = $data['menu'] ?? null;
+        $this->widgets = $data['widgets'] ?? null;
+    }
+
+    public function validate(): array
+    {
+        $errors = [];
+
+        if (empty($this->name)) {
+            $errors['name'] = 'Module name is required';
+        }
+
+        if (empty($this->identifier)) {
+            $errors['identifier'] = 'Module identifier is required';
+        } elseif (!preg_match('/^[a-z0-9\-\.]+$/', $this->identifier)) {
+            $errors['identifier'] = 'Module identifier can only contain lowercase letters, numbers, dots and dashes';
+        }
+
+        if (empty($this->version)) {
+            $errors['version'] = 'Module version is required';
+        } elseif (!preg_match('/^\d+\.\d+\.\d+(?:-\w+)?$/', $this->version)) {
+            $errors['version'] = 'Invalid version format. Must follow semver (e.g., 1.0.0 or 1.0.0-beta)';
+        }
+
+        foreach ($this->providers as $provider) {
+            if (!class_exists($provider)) {
+                $errors['providers']

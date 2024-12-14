@@ -1,0 +1,167 @@
+// app/Core/Widget/Interfaces/WidgetInterface.php
+<?php
+
+namespace App\Core\Widget\Interfaces;
+
+interface WidgetInterface 
+{
+    public function configure(array $config): void;
+    public function render(): string;
+    public function validate(): array;
+    public function getSettings(): array;
+    public function setSettings(array $settings): void;
+    public function isActive(): bool;
+    public function setActive(bool $status): void;
+}
+
+// app/Core/Widget/Interfaces/WidgetCacheInterface.php
+<?php
+
+namespace App\Core\Widget\Interfaces;
+
+interface WidgetCacheInterface
+{
+    public function getCacheKey(): string;
+    public function getCacheDuration(): int;
+    public function shouldCache(): bool;
+    public function getCacheTags(): array;
+    public function clearCache(): void;
+}
+
+// app/Core/Widget/Interfaces/WidgetRenderInterface.php
+<?php
+
+namespace App\Core\Widget\Interfaces;
+
+interface WidgetRenderInterface
+{
+    public function renderContent(): string;
+    public function renderSettings(): string;
+    public function renderPreview(): string;
+    public function getViewData(): array;
+}
+
+// app/Core/Widget/Interfaces/WidgetMetricsInterface.php
+<?php
+
+namespace App\Core\Widget\Interfaces;
+
+use Carbon\Carbon;
+
+interface WidgetMetricsInterface
+{
+    public function getViewCount(): int;
+    public function getUniqueViewCount(): int;
+    public function getMetrics(Carbon $start, Carbon $end): array;
+    public function trackView(): void;
+    public function trackInteraction(string $type): void;
+}
+
+// app/Core/Widget/Interfaces/WidgetAuthorizationInterface.php
+<?php
+
+namespace App\Core\Widget\Interfaces;
+
+use Illuminate\Contracts\Auth\Authenticatable;
+
+interface WidgetAuthorizationInterface
+{
+    public function canView(Authenticatable $user): bool;
+    public function canEdit(Authenticatable $user): bool;
+    public function canDelete(Authenticatable $user): bool;
+    public function getPermissions(): array;
+    public function setPermissions(array $permissions): void;
+}
+
+// app/Core/Widget/Interfaces/WidgetExportInterface.php
+<?php
+
+namespace App\Core\Widget\Interfaces;
+
+interface WidgetExportInterface
+{
+    public function toArray(): array;
+    public function toJson(): string;
+    public function toYaml(): string;
+    public function toXml(): string;
+}
+
+// app/Core/Widget/Interfaces/WidgetBackupInterface.php
+<?php
+
+namespace App\Core\Widget\Interfaces;
+
+interface WidgetBackupInterface
+{
+    public function createBackup(): string;
+    public function restoreFromBackup(string $backup): bool;
+    public function getBackupData(): array;
+    public function getBackupMetadata(): array;
+}
+
+// app/Core/Widget/Interfaces/WidgetValidatorInterface.php
+<?php
+
+namespace App\Core\Widget\Interfaces;
+
+interface WidgetValidatorInterface
+{
+    public function validate(array $data): array;
+    public function validateSettings(array $settings): array;
+    public function validatePermissions(array $permissions): array;
+    public function validateVisibilityRules(array $rules): array;
+}
+
+// app/Core/Widget/Interfaces/WidgetStateInterface.php
+<?php
+
+namespace App\Core\Widget\Interfaces;
+
+interface WidgetStateInterface
+{
+    public function getState(): array;
+    public function setState(array $state): void;
+    public function resetState(): void;
+    public function compareState(array $newState): array;
+}
+
+// app/Core/Widget/Interfaces/WidgetAnalyticsInterface.php
+<?php
+
+namespace App\Core\Widget\Interfaces;
+
+use Carbon\Carbon;
+
+interface WidgetAnalyticsInterface
+{
+    public function collectMetrics(Carbon $start, Carbon $end): array;
+    public function generateReport(string $type): array;
+    public function getPerformanceData(): array;
+    public function getUsageStatistics(): array;
+}
+
+// app/Core/Widget/Interfaces/WidgetSearchInterface.php
+<?php
+
+namespace App\Core\Widget\Interfaces;
+
+interface WidgetSearchInterface
+{
+    public function search(array $criteria): array;
+    public function getSearchableAttributes(): array;
+    public function buildSearchIndex(): void;
+    public function updateSearchIndex(): void;
+}
+
+// app/Core/Widget/Interfaces/WidgetFactoryInterface.php
+<?php
+
+namespace App\Core\Widget\Interfaces;
+
+interface WidgetFactoryInterface
+{
+    public function create(string $type, array $attributes = []): WidgetInterface;
+    public function createFromConfig(array $config): WidgetInterface;
+    public function getAvailableTypes(): array;
+    public function registerType(string $type, string $class): void;
+}

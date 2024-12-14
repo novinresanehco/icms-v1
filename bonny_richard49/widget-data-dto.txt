@@ -1,0 +1,60 @@
+<?php
+
+namespace App\Core\Widget\DTO;
+
+use App\Core\Shared\DTO\DataTransferObject;
+use JsonSerializable;
+
+class WidgetData extends DataTransferObject implements JsonSerializable
+{
+    public string $name;
+    public string $identifier;
+    public string $type;
+    public string $area;
+    public array $settings;
+    public ?int $order;
+    public bool $isActive;
+    public ?int $cacheTtl;
+    public array $visibilityRules;
+    public array $permissions;
+    public ?array $metadata;
+
+    public function __construct(array $data)
+    {
+        $this->name = $data['name'];
+        $this->identifier = $data['identifier'];
+        $this->type = $data['type'];
+        $this->area = $data['area'];
+        $this->settings = $data['settings'] ?? [];
+        $this->order = $data['order'] ?? null;
+        $this->isActive = $data['is_active'] ?? true;
+        $this->cacheTtl = $data['cache_ttl'] ?? null;
+        $this->visibilityRules = $data['visibility_rules'] ?? [];
+        $this->permissions = $data['permissions'] ?? [];
+        $this->metadata = $data['metadata'] ?? null;
+    }
+
+    public function validate(): array
+    {
+        $errors = [];
+
+        if (empty($this->name)) {
+            $errors['name'] = 'Widget name is required';
+        }
+
+        if (empty($this->identifier)) {
+            $errors['identifier'] = 'Widget identifier is required';
+        } elseif (!preg_match('/^[a-z0-9\-_]+$/', $this->identifier)) {
+            $errors['identifier'] = 'Widget identifier can only contain lowercase letters, numbers, dashes and underscores';
+        }
+
+        if (empty($this->type)) {
+            $errors['type'] = 'Widget type is required';
+        }
+
+        if (empty($this->area)) {
+            $errors['area'] = 'Widget area is required';
+        }
+
+        if ($this->cacheTtl !== null && $this->cacheTtl < 0) {
+            $errors['cache_ttl

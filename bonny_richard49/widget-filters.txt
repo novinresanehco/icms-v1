@@ -1,0 +1,156 @@
+// app/Core/Widget/Filters/WidgetFilter.php
+<?php
+
+namespace App\Core\Widget\Filters;
+
+use Illuminate\Database\Eloquent\Builder;
+
+class WidgetFilter
+{
+    public function apply(Builder $query, array $filters): Builder
+    {
+        if (!empty($filters['search'])) {
+            $query->where(function($q) use ($filters) {
+                $q->where('name', 'like', "%{$filters['search']}%")
+                  ->orWhere('identifier', 'like', "%{$filters['search']}%");
+            });
+        }
+
+        if (!empty($filters['type'])) {
+            $query->where('type', $filters['type']);
+        }
+
+        if (!empty($filters['area'])) {
+            $query->where('area', $filters['area']);
+        }
+
+        if (isset($filters['is_active'])) {
+            $query->where('is_active', $filters['is_active']);
+        }
+
+        if (!empty($filters['created_after'])) {
+            $query->where('created_at', '>=', $filters['created_after']);
+        }
+
+        if (!empty($filters['created_before'])) {
+            $query->where('created_at', '<=', $filters['created_before']);
+        }
+
+        return $query;
+    }
+}
+
+// app/Core/Widget/Filters/WidgetTypeFilter.php
+<?php
+
+namespace App\Core\Widget\Filters;
+
+use Illuminate\Database\Eloquent\Builder;
+
+class WidgetTypeFilter
+{
+    private array $availableTypes = [
+        'content',
+        'menu',
+        'social',
+        'custom'
+    ];
+
+    public function apply(Builder $query, string $type): Builder
+    {
+        if (in_array($type, $this->availableTypes)) {
+            return $query->where('type', $type);
+        }
+
+        return $query;
+    }
+}
+
+// app/Core/Widget/Filters/WidgetAreaFilter.php
+<?php
+
+namespace App\Core\Widget\Filters;
+
+use Illuminate\Database\Eloquent\Builder;
+
+class WidgetAreaFilter
+{
+    private array $availableAreas = [
+        'sidebar',
+        'footer',
+        'header',
+        'content'
+    ];
+
+    public function apply(Builder $query, string $area): Builder
+    {
+        if (in_array($area, $this->availableAreas)) {
+            return $query->where('area', $area);
+        }
+
+        return $query;
+    }
+}
+
+// app/Core/Widget/Filters/WidgetPermissionFilter.php
+<?php
+
+namespace App\Core\Widget\Filters;
+
+use Illuminate\Database\Eloquent\Builder;
+
+class WidgetPermissionFilter
+{
+    public function apply(Builder $query, array $permissions): Builder
+    {
+        foreach ($permissions as $permission) {
+            $query->whereJsonContains('permissions', $permission);
+        }
+
+        return $query;
+    }
+}
+
+// app/Core/Widget/Filters/WidgetSearchFilter.php
+<?php
+
+namespace App\Core\Widget\Filters;
+
+use Illuminate\Database\Eloquent\Builder;
+
+class WidgetSearchFilter
+{
+    public function apply(Builder $query, string $search): Builder
+    {
+        return $query->where(function($q) use ($search) {
+            $q->where('name', 'like', "%{$search}%")
+              ->orWhere('identifier', 'like', "%{$search}%")
+              ->orWhere('type', 'like', "%{$search}%")
+              ->orWhere('area', 'like', "%{$search}%");
+        });
+    }
+}
+
+// app/Core/Widget/Filters/WidgetDateFilter.php
+<?php
+
+namespace App\Core\Widget\Filters;
+
+use Illuminate\Database\Eloquent\Builder;
+use Carbon\Carbon;
+
+class WidgetDateFilter
+{
+    public function apply(Builder $query, ?Carbon $start = null, ?Carbon $end = null): Builder
+    {
+        if ($start) {
+            $query->where('created_at', '>=', $start);
+        }
+
+        if ($end) {
+            $query->where('created_at', '<=', $end);
+        }
+
+        return $query;
+    }
+}

@@ -1,0 +1,140 @@
+<?php
+
+namespace App\Core\Monitoring;
+
+class NotificationService implements NotificationServiceInterface
+{
+    private array $channels;
+    private NotificationFormatter $formatter;
+    private NotificationStore $store;
+    private AuditLogger $logger;
+
+    public function send(array $notification, array $targets): void
+    {
+        $operationId = uniqid('notify_', true);
+
+        try {
+            $this->validateNotification($notification);
+            $this->processNotification($notification, $operationId);
+            $this->dispatchToChannels($notification, $targets);
+            $this->storeNotification($notification, $operationId);
+            $this->logSuccess($notification, $operationId);
+
+        } catch (\Throwable $e) {
+            $this->handleFailure($e, $notification, $operationId);
+            throw $e;
+        }
+    }
+
+    public function sendCritical(array $notification, array $targets): void
+    {
+        $operationId = uniqid('critical_notify_', true);
+
+        try {
+            $this->validateCriticalNotification($notification);
+            $this->processCriticalNotification($notification, $operationId);
+            $this->dispatchToUrgentChannels($notification, $targets);
+            $this->storeCriticalNotification($notification, $operationId);
+            $this->logCriticalSuccess($notification, $operationId);
+
+        } catch (\Throwable $e) {
+            $this->handleCriticalFailure($e, $notification, $operationId);
+            throw $e;
+        }
+    }
+
+    protected function validateNotification(array $notification): void
+    {
+        if (!isset($notification['type'], $notification['message'])) {
+            throw new NotificationException('Invalid notification format');
+        }
+    }
+
+    protected function validateCriticalNotification(array $notification): void
+    {
+        $this->validateNotification($notification);
+
+        if (!isset($notification['severity']) || 
+            $notification['severity'] !== 'CRITICAL') {
+            throw new NotificationException('Invalid critical notification');
+        }
+    }
+
+    protected function processNotification(array &$notification, string $operationId): void
+    {
+        $notification['timestamp'] = time();
+        $notification['operation_id'] = $operationId;
+        $notification = $this->formatter->format($notification);
+    }
+
+    protected function processCriticalNotification(array &$notification, string $operationId): void
+    {
+        $this->processNotification($notification, $operationId);
+        $notification['priority'] = 'HIGHEST';
+        $notification['requires_ack'] = true;
+        $notification = $this->formatter->formatCritical($notification);
+    }
+
+    protected function dispatchToChannels(array $notification, array $targets): void
+    {
+        foreach ($targets as $target) {
+            $this->dispatchToChannel($notification, $target);
+        }
+    }
+
+    protected function dispatchToUrgentChannels(array $notification, array $targets): void
+    {
+        foreach ($targets as $target) {
+            $this->dispatchToUrgentChannel($notification, $target);
+        }
+    }
+
+    protected function dispatchToChannel(array $notification, string $target): void
+    {
+        if (!isset($this->channels[$target])) {
+            throw new NotificationException("Invalid notification channel: {$target}");
+        }
+
+        $this->channels[$target]->send($notification);
+    }
+
+    protected function dispatchToUrgentChannel(array $notification, string $target): void
+    {
+        if (!isset($this->channels[$target])) {
+            throw new NotificationException("Invalid urgent channel: {$target}");
+        }
+
+        $this->channels[$target]->sendUrgent($notification);
+    }
+
+    protected function storeNotification(array $notification, string $operationId): void
+    {
+        $this->store->store([
+            'notification' => $notification,
+            'operation_id' => $operationId,
+            'timestamp' => time()
+        ]);
+    }
+
+    protected function storeCriticalNotification(array $notification, string $operationId): void
+    {
+        $this->store->storeCritical([
+            'notification' => $notification,
+            'operation_id' => $operationId,
+            'timestamp' => time()
+        ]);
+    }
+
+    protected function logSuccess(array $notification, string $operationId): void
+    {
+        $this->logger->logSuccess([
+            'type' => 'notification_sent',
+            'notification' => $notification,
+            'operation_id' => $operationId
+        ]);
+    }
+
+    protected function logCriticalSuccess(array $notification, string $operationId): void
+    {
+        $this->logger->logCritical([
+            

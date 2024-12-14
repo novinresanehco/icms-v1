@@ -1,0 +1,45 @@
+// app/Core/Queue/QueueManager.php
+<?php
+
+namespace App\Core\Queue;
+
+use App\Core\Security\SecurityKernel;
+use App\Core\Monitoring\MetricsCollector;
+
+class QueueManager implements QueueInterface
+{
+    private SecurityKernel $security;
+    private MetricsCollector $metrics;
+    private array $queues = [];
+    private array $config;
+
+    public function push(string $queue, $job): void
+    {
+        $this->security->executeSecure(function() use ($queue, $job) {
+            $this->executePush($queue, $job);
+        });
+    }
+
+    public function process(string $queue): void
+    {
+        $this->security->executeSecure(function() use ($queue) {
+            $this->executeProcessing($queue);
+        });
+    }
+
+    private function executePush(string $queue, $job): void
+    {
+        $this->validateQueue($queue);
+        
+        $startTime = microtime(true);
+        
+        try {
+            $this->queues[$queue]->push($this->prepareJob($job));
+            
+            $this->metrics->increment('queue.pushed', [
+                'queue' => $queue,
+                'job_type' => get_class($job)
+            ]);
+            
+            $this->metrics->timing('queue.push_time', microtime(true) - $startTime, [
+                'queue' =>

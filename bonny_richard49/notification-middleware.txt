@@ -1,0 +1,72 @@
+<?php
+
+namespace App\Core\Notification\Http\Middleware;
+
+use Closure;
+use Illuminate\Http\Request;
+use App\Core\Notification\Services\NotificationService;
+use Symfony\Component\HttpFoundation\Response;
+
+class TrackNotificationRead
+{
+    protected NotificationService $notificationService;
+
+    public function __construct(NotificationService $notificationService)
+    {
+        $this->notificationService = $notificationService;
+    }
+
+    /**
+     * Handle an incoming request.
+     *
+     * @param Request $request
+     * @param Closure $next
+     * @return Response
+     */
+    public function handle(Request $request, Closure $next): Response
+    {
+        $response = $next($request);
+
+        // Check if request contains notification tracking parameter
+        if ($notificationId = $request->query('notification_track')) {
+            try {
+                $this->notificationService->markAsRead($notificationId);
+            } catch (\Exception $e) {
+                // Log error but don't interrupt response
+                Log::error('Failed to track notification read', [
+                    'notification_id' => $notificationId,
+                    'error' => $e->getMessage()
+                ]);
+            }
+        }
+
+        return $response;
+    }
+}
+
+class NotificationRateLimit
+{
+    /**
+     * Handle an incoming request.
+     *
+     * @param Request $request
+     * @param Closure $next
+     * @return Response
+     */
+    public function handle(Request $request, Closure $next): Response
+    {
+        // Check rate limiting configuration
+        if (!config('notifications.security.rate_limiting.enable')) {
+            return $next($request);
+        }
+
+        $maxAttempts = config('notifications.security.rate_limiting.max_per_minute', 60);
+        $decayMinutes = config('notifications.security.rate_limiting.decay_minutes', 1);
+
+        // Create rate limiter for notifications
+        $limiter = app(RateLimiter::class);
+        $key = 'notifications:' . $request->user()->id;
+
+        if ($limiter->tooManyAttempts($key, $maxAttempts)) {
+            throw new NotificationRateLimitExceededException(
+                'Too many notification requests. Please

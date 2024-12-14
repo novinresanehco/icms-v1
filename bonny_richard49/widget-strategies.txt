@@ -1,0 +1,166 @@
+// app/Core/Widget/Strategies/WidgetCacheStrategy.php
+<?php
+
+namespace App\Core\Widget\Strategies;
+
+use App\Core\Widget\Models\Widget;
+use Illuminate\Support\Facades\Cache;
+
+class WidgetCacheStrategy
+{
+    public function get(Widget $widget, string $key)
+    {
+        if (!$this->shouldCache($widget)) {
+            return null;
+        }
+
+        return Cache::tags($this->getTags($widget))->get($this->getCacheKey($widget, $key));
+    }
+
+    public function put(Widget $widget, string $key, $value): void
+    {
+        if (!$this->shouldCache($widget)) {
+            return;
+        }
+
+        Cache::tags($this->getTags($widget))->put(
+            $this->getCacheKey($widget, $key),
+            $value,
+            $this->getTtl($widget)
+        );
+    }
+
+    public function forget(Widget $widget, string $key): void
+    {
+        Cache::tags($this->getTags($widget))->forget($this->getCacheKey($widget, $key));
+    }
+
+    public function flush(Widget $widget): void
+    {
+        Cache::tags($this->getTags($widget))->flush();
+    }
+
+    protected function shouldCache(Widget $widget): bool
+    {
+        return $widget->cache_ttl !== null && $widget->cache_ttl > 0;
+    }
+
+    protected function getTags(Widget $widget): array
+    {
+        return [
+            'widgets',
+            "widget:{$widget->id}",
+            "area:{$widget->area}",
+            "type:{$widget->type}"
+        ];
+    }
+
+    protected function getCacheKey(Widget $widget, string $key): string
+    {
+        return "widget:{$widget->id}:{$key}";
+    }
+
+    protected function getTtl(Widget $widget): int
+    {
+        return $widget->cache_ttl ?? config('widgets.cache.ttl', 3600);
+    }
+}
+
+// app/Core/Widget/Strategies/WidgetRenderStrategy.php
+<?php
+
+namespace App\Core\Widget\Strategies;
+
+use App\Core\Widget\Models\Widget;
+use Illuminate\View\View;
+use Illuminate\Support\Facades\View as ViewFacade;
+
+class WidgetRenderStrategy
+{
+    public function render(Widget $widget): View
+    {
+        $view = $this->resolveView($widget);
+        $data = $this->prepareViewData($widget);
+
+        return ViewFacade::make($view, $data);
+    }
+
+    protected function resolveView(Widget $widget): string
+    {
+        $views = [
+            "widgets.types.{$widget->type}",
+            "widgets.types.default",
+            "widgets.default"
+        ];
+
+        foreach ($views as $view) {
+            if (ViewFacade::exists($view)) {
+                return $view;
+            }
+        }
+
+        return "widgets.default";
+    }
+
+    protected function prepareViewData(Widget $widget): array
+    {
+        return [
+            'widget' => $widget,
+            'settings' => $widget->settings ?? [],
+            'metadata' => $widget->metadata ?? [],
+        ];
+    }
+}
+
+// app/Core/Widget/Strategies/WidgetVisibilityStrategy.php
+<?php
+
+namespace App\Core\Widget\Strategies;
+
+use App\Core\Widget\Models\Widget;
+use Illuminate\Contracts\Auth\Authenticatable;
+
+class WidgetVisibilityStrategy
+{
+    public function isVisible(Widget $widget, ?Authenticatable $user = null): bool
+    {
+        if (!$widget->is_active) {
+            return false;
+        }
+
+        if (empty($widget->visibility_rules)) {
+            return true;
+        }
+
+        $rules = $widget->visibility_rules;
+        $results = [];
+
+        foreach ($rules['conditions'] as $condition) {
+            $results[] = $this->evaluateCondition($condition, $user);
+        }
+
+        return $rules['operator'] === 'and'
+            ? !in_array(false, $results, true)
+            : in_array(true, $results, true);
+    }
+
+    protected function evaluateCondition(array $condition, ?Authenticatable $user): bool
+    {
+        if (!$user) {
+            return false;
+        }
+
+        return match($condition['type']) {
+            'role' => $user->hasRole($condition['value']),
+            'permission' => $user->can($condition['value']),
+            'custom' => $this->evaluateCustomCondition($condition, $user),
+            default => false
+        };
+    }
+
+    protected function evaluateCustomCondition(array $condition, Authenticatable $user): bool
+    {
+        // Implementation for custom conditions
+        return false;
+    }
+}

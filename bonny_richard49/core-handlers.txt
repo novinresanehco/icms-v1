@@ -1,0 +1,129 @@
+<?php
+
+namespace App\Core\Handlers;
+
+abstract class CriticalExceptionHandler
+{
+    protected AuditLogger $audit;
+    protected NotificationService $notifications;
+    protected SecurityManager $security;
+    protected MetricsCollector $metrics;
+
+    abstract public function handle(\Throwable $e): void;
+    abstract protected function shouldReport(\Throwable $e): bool;
+    abstract protected function context(\Throwable $e): array;
+}
+
+class SecurityExceptionHandler extends CriticalExceptionHandler
+{
+    public function handle(\Throwable $e): void
+    {
+        if (!$this->shouldReport($e)) {
+            return;
+        }
+
+        $context = $this->context($e);
+        
+        $this->audit->logSecurityEvent($e, $context);
+        $this->notifications->notifySecurityTeam($e, $context);
+        $this->security->handleSecurityBreach($e, $context);
+        $this->metrics->recordSecurityEvent($e, $context);
+    }
+
+    protected function shouldReport(\Throwable $e): bool
+    {
+        return $e instanceof SecurityException;
+    }
+
+    protected function context(\Throwable $e): array
+    {
+        return [
+            'ip' => request()->ip(),
+            'user' => auth()->user()?->id,
+            'url' => request()->fullUrl(),
+            'method' => request()->method(),
+            'timestamp' => time()
+        ];
+    }
+}
+
+class ValidationExceptionHandler extends CriticalExceptionHandler
+{
+    public function handle(\Throwable $e): void
+    {
+        if (!$this->shouldReport($e)) {
+            return;
+        }
+
+        $context = $this->context($e);
+        
+        $this->audit->logValidationFailure($e, $context);
+        $this->metrics->recordValidationFailure($e, $context);
+    }
+
+    protected function shouldReport(\Throwable $e): bool
+    {
+        return $e instanceof ValidationException;
+    }
+
+    protected function context(\Throwable $e): array
+    {
+        if ($e instanceof ValidationException) {
+            return [
+                'errors' => $e->getErrors(),
+                'data' => request()->all(),
+                'timestamp' => time()
+            ];
+        }
+
+        return [];
+    }
+}
+
+class DatabaseExceptionHandler extends CriticalExceptionHandler 
+{
+    public function handle(\Throwable $e): void
+    {
+        if (!$this->shouldReport($e)) {
+            return;
+        }
+
+        $context = $this->context($e);
+        
+        $this->audit->logDatabaseError($e, $context);
+        $this->notifications->notifyDatabaseAdmin($e, $context);
+        $this->metrics->recordDatabaseError($e, $context);
+    }
+
+    protected function shouldReport(\Throwable $e): bool
+    {
+        return $e instanceof QueryException || 
+               $e instanceof \PDOException;
+    }
+
+    protected function context(\Throwable $e): array
+    {
+        return [
+            'query' => $e instanceof QueryException ? $e->getSql() : null,
+            'bindings' => $e instanceof QueryException ? $e->getBindings() : null,
+            'timestamp' => time()
+        ];
+    }
+}
+
+class CacheExceptionHandler extends CriticalExceptionHandler
+{
+    public function handle(\Throwable $e): void
+    {
+        if (!$this->shouldReport($e)) {
+            return;
+        }
+
+        $context = $this->context($e);
+        
+        $this->audit->logCacheError($e, $context);
+        $this->metrics->recordCacheError($e, $context);
+    }
+
+    protected function shouldReport(\Throwable $e): bool
+    

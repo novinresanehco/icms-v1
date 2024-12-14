@@ -1,0 +1,139 @@
+<?php
+
+namespace App\Repositories;
+
+use App\Core\Repositories\BaseRepository;
+use App\Models\Content;
+use App\Core\Security\SecurityManager;
+use App\Core\Cache\CacheManager;
+use App\Core\Validation\ValidationService;
+use Illuminate\Database\Eloquent\Collection;
+
+class ContentRepository extends BaseRepository
+{
+    protected Content $model;
+
+    public function __construct(
+        Content $model,
+        SecurityManager $security,
+        CacheManager $cache,
+        ValidationService $validator
+    ) {
+        parent::__construct($model, $security, $cache, $validator);
+        $this->model = $model;
+    }
+
+    public function getPublished(): Collection
+    {
+        return $this->cache->remember('content.published', function() {
+            return $this->model
+                ->where('status', 'published')
+                ->where('publish_at', '<=', now())
+                ->orderBy('publish_at', 'desc')
+                ->get();
+        });
+    }
+
+    public function getByCategory(int $categoryId): Collection
+    {
+        return $this->cache->tags(['content', 'category'])->remember(
+            "content.category.{$categoryId}", 
+            function() use ($categoryId) {
+                return $this->model
+                    ->where('category_id', $categoryId)
+                    ->where('status', 'published')
+                    ->orderBy('publish_at', 'desc')
+                    ->get();
+            }
+        );
+    }
+
+    public function search(array $criteria): Collection
+    {
+        $query = $this->model->newQuery();
+
+        if (isset($criteria['title'])) {
+            $query->where('title', 'like', "%{$criteria['title']}%");
+        }
+
+        if (isset($criteria['status'])) {
+            $query->where('status', $criteria['status']);
+        }
+
+        if (isset($criteria['category_id'])) {
+            $query->where('category_id', $criteria['category_id']);
+        }
+
+        if (isset($criteria['author_id'])) {
+            $query->where('author_id', $criteria['author_id']);
+        }
+
+        if (isset($criteria['date_from'])) {
+            $query->where('created_at', '>=', $criteria['date_from']);
+        }
+
+        if (isset($criteria['date_to'])) {
+            $query->where('created_at', '<=', $criteria['date_to']);
+        }
+
+        if (isset($criteria['tags'])) {
+            $query->whereHas('tags', function($q) use ($criteria) {
+                $q->whereIn('tags.id', $criteria['tags']);
+            });
+        }
+
+        return $query->get();
+    }
+
+    public function countPublished(): int
+    {
+        return $this->cache->remember('content.count.published', function() {
+            return $this->model
+                ->where('status', 'published')
+                ->count();
+        });
+    }
+
+    public function countPending(): int
+    {
+        return $this->cache->remember('content.count.pending', function() {
+            return $this->model
+                ->where('status', 'review')
+                ->count();
+        });
+    }
+
+    public function countDrafts(): int
+    {
+        return $this->cache->remember('content.count.drafts', function() {
+            return $this->model
+                ->where('status', 'draft')
+                ->count();
+        });
+    }
+
+    protected function rules(): array
+    {
+        return [
+            'title' => 'required|string|max:255',
+            'body' => 'required|string',
+            'status' => 'required|in:draft,review,published',
+            'author_id' => 'required|exists:users,id',
+            'category_id' => 'required|exists:categories,id'
+        ];
+    }
+
+    protected function getCacheKey(string $operation, ...$params): string
+    {
+        return sprintf(
+            'content:%s:%s',
+            $operation,
+            implode(':', $params)
+        );
+    }
+
+    protected function getCacheTags(): array
+    {
+        return ['content'];
+    }
+}

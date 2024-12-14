@@ -1,0 +1,101 @@
+<?php
+
+namespace App\Core\Monitoring;
+
+final class MetricsCollector 
+{
+    private StorageService $storage;
+    private ValidationService $validator;
+    private array $metrics = [];
+    private array $thresholds;
+
+    public function __construct(
+        StorageService $storage,
+        ValidationService $validator,
+        array $thresholds
+    ) {
+        $this->storage = $storage;
+        $this->validator = $validator;
+        $this->thresholds = $thresholds;
+    }
+
+    public function collect(string $metric, $value): void 
+    {
+        // Validate metric
+        if (!$this->validator->validateMetric($metric, $value)) {
+            throw new ValidationException("Invalid metric: {$metric}");
+        }
+
+        // Store metric with timestamp
+        $this->metrics[$metric][] = [
+            'value' => $value,
+            'timestamp' => microtime(true)
+        ];
+
+        // Check threshold
+        if ($this->isThresholdExceeded($metric, $value)) {
+            $this->handleThresholdViolation($metric, $value);
+        }
+
+        // Store for persistence
+        $this->persistMetric($metric, $value);
+    }
+
+    public function getMetric(string $metric): array 
+    {
+        if (!isset($this->metrics[$metric])) {
+            throw new MetricNotFoundException("Metric not found: {$metric}");
+        }
+
+        return $this->metrics[$metric];
+    }
+
+    public function getAverageMetric(string $metric, int $seconds = 60): float 
+    {
+        $values = $this->getMetricValues($metric, $seconds);
+        
+        if (empty($values)) {
+            throw new NoMetricDataException("No data for metric: {$metric}");
+        }
+
+        return array_sum($values) / count($values);
+    }
+
+    public function getMetricRate(string $metric, int $seconds = 60): float 
+    {
+        $values = $this->getMetricValues($metric, $seconds);
+        
+        if (empty($values)) {
+            throw new NoMetricDataException("No data for metric: {$metric}");
+        }
+
+        $timespan = end($values)['timestamp'] - reset($values)['timestamp'];
+        return count($values) / $timespan;
+    }
+
+    private function getMetricValues(string $metric, int $seconds): array 
+    {
+        if (!isset($this->metrics[$metric])) {
+            return [];
+        }
+
+        $cutoff = microtime(true) - $seconds;
+        return array_filter(
+            $this->metrics[$metric],
+            fn($item) => $item['timestamp'] >= $cutoff
+        );
+    }
+
+    private function isThresholdExceeded(string $metric, $value): bool 
+    {
+        if (!isset($this->thresholds[$metric])) {
+            return false;
+        }
+
+        $threshold = $this->thresholds[$metric];
+        return match ($threshold['operator']) {
+            '>' => $value > $threshold['value'],
+            '<' => $value < $threshold['value'],
+            '>=' => $value >= $threshold['value'],
+            '<=' => $value <= $threshold['value'],
+            '=' => $value === $threshold['value'],

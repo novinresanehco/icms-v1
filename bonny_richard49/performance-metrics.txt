@@ -1,0 +1,140 @@
+<?php
+
+namespace App\Core\Performance\Models;
+
+use Illuminate\Database\Eloquent\Model;
+
+class Metric extends Model
+{
+    protected $fillable = [
+        'name',
+        'value',
+        'tags',
+        'recorded_at'
+    ];
+
+    protected $casts = [
+        'value' => 'float',
+        'tags' => 'array',
+        'recorded_at' => 'datetime'
+    ];
+}
+
+namespace App\Core\Performance\Reports;
+
+class PerformanceReport
+{
+    protected array $metrics;
+    protected array $thresholds;
+    protected array $recommendations;
+
+    public function __construct(array $data)
+    {
+        $this->metrics = $data['metrics'] ?? [];
+        $this->thresholds = $data['thresholds'] ?? [];
+        $this->recommendations = $data['recommendations'] ?? [];
+    }
+
+    public function generate(): array
+    {
+        return [
+            'summary' => $this->generateSummary(),
+            'metrics' => $this->analyzeMetrics(),
+            'violations' => $this->checkThresholds(),
+            'recommendations' => $this->generateRecommendations(),
+            'trends' => $this->analyzeTrends()
+        ];
+    }
+
+    protected function generateSummary(): array
+    {
+        return [
+            'overall_health' => $this->calculateOverallHealth(),
+            'critical_issues' => $this->findCriticalIssues(),
+            'performance_score' => $this->calculatePerformanceScore()
+        ];
+    }
+
+    protected function analyzeMetrics(): array
+    {
+        $analysis = [];
+
+        foreach ($this->metrics as $category => $metrics) {
+            $analysis[$category] = [
+                'average' => $this->calculateAverage($metrics),
+                'percentile_95' => $this->calculatePercentile($metrics, 95),
+                'min' => min($metrics),
+                'max' => max($metrics),
+                'trend' => $this->calculateTrend($metrics)
+            ];
+        }
+
+        return $analysis;
+    }
+
+    protected function calculatePerformanceScore(): float
+    {
+        $weights = [
+            'response_time' => 0.3,
+            'cpu_usage' => 0.2,
+            'memory_usage' => 0.2,
+            'cache_hit_ratio' => 0.15,
+            'error_rate' => 0.15
+        ];
+
+        $score = 0;
+
+        foreach ($weights as $metric => $weight) {
+            $score += $this->calculateMetricScore($metric) * $weight;
+        }
+
+        return round($score, 2);
+    }
+}
+
+namespace App\Core\Performance\Repositories;
+
+use App\Core\Performance\Models\Metric;
+use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\DB;
+
+class MetricRepository
+{
+    protected Metric $model;
+
+    public function __construct(Metric $model)
+    {
+        $this->model = $model;
+    }
+
+    public function create(array $data): Metric
+    {
+        return $this->model->create($data);
+    }
+
+    public function getMetrics(array $filters = []): Collection
+    {
+        $query = $this->model->newQuery();
+
+        if (isset($filters['name'])) {
+            $query->where('name', $filters['name']);
+        }
+
+        if (isset($filters['start_date'])) {
+            $query->where('recorded_at', '>=', $filters['start_date']);
+        }
+
+        if (isset($filters['end_date'])) {
+            $query->where('recorded_at', '<=', $filters['end_date']);
+        }
+
+        if (isset($filters['tags'])) {
+            foreach ($filters['tags'] as $tag => $value) {
+                $query->where("tags->{$tag}", $value);
+            }
+        }
+
+        return $query->get();
+    }
+
+    public function getAggregates(string $name

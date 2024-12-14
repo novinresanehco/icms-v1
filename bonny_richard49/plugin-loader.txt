@@ -1,0 +1,136 @@
+<?php
+
+namespace App\Core\Plugin\Services;
+
+use App\Core\Plugin\Contracts\PluginInterface;
+use App\Core\Plugin\Exceptions\PluginException;
+use Illuminate\Support\Facades\File;
+
+class PluginLoader
+{
+    protected string $pluginsPath;
+    protected array $loadedPlugins = [];
+
+    public function __construct(string $pluginsPath)
+    {
+        $this->pluginsPath = $pluginsPath;
+    }
+
+    public function load(string $pluginId): PluginInterface
+    {
+        if (isset($this->loadedPlugins[$pluginId])) {
+            return $this->loadedPlugins[$pluginId];
+        }
+
+        $pluginPath = $this->getPluginPath($pluginId);
+        
+        if (!File::exists($pluginPath)) {
+            throw new PluginException("Plugin directory not found: {$pluginPath}");
+        }
+
+        $config = $this->loadConfiguration($pluginPath);
+        $class = $config['main_class'] ?? null;
+
+        if (!$class || !class_exists($class)) {
+            throw new PluginException("Invalid plugin class: {$class}");
+        }
+
+        $plugin = new $class($config);
+
+        if (!($plugin instanceof PluginInterface)) {
+            throw new PluginException("Plugin class must implement PluginInterface");
+        }
+
+        $this->loadedPlugins[$pluginId] = $plugin;
+        return $plugin;
+    }
+
+    public function loadAll(): array
+    {
+        $plugins = [];
+        $directories = File::directories($this->pluginsPath);
+
+        foreach ($directories as $directory) {
+            $pluginId = basename($directory);
+            try {
+                $plugins[$pluginId] = $this->load($pluginId);
+            } catch (\Exception $e) {
+                // Log error but continue loading other plugins
+                logger()->error("Failed to load plugin {$pluginId}: " . $e->getMessage());
+            }
+        }
+
+        return $plugins;
+    }
+
+    protected function getPluginPath(string $pluginId): string
+    {
+        return $this->pluginsPath . '/' . $pluginId;
+    }
+
+    protected function loadConfiguration(string $pluginPath): array
+    {
+        $configFile = $pluginPath . '/plugin.json';
+
+        if (!File::exists($configFile)) {
+            throw new PluginException("Plugin configuration file not found");
+        }
+
+        $config = json_decode(File::get($configFile), true);
+
+        if (json_last_error() !== JSON_ERROR_NONE) {
+            throw new PluginException("Invalid plugin configuration file");
+        }
+
+        return $config;
+    }
+}
+
+namespace App\Core\Plugin\Repositories;
+
+use App\Core\Plugin\Contracts\PluginRepositoryInterface;
+use App\Core\Plugin\Models\Plugin;
+use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\Cache;
+
+class PluginRepository implements PluginRepositoryInterface
+{
+    protected Plugin $model;
+
+    public function __construct(Plugin $model)
+    {
+        $this->model = $model;
+    }
+
+    public function all(): Collection
+    {
+        return Cache::tags(['plugins'])
+            ->remember('plugins.all', 3600, function () {
+                return $this->model->with(['hooks', 'assets'])->get();
+            });
+    }
+
+    public function find(string $id): ?Plugin
+    {
+        return Cache::tags(['plugins'])
+            ->remember("plugin.{$id}", 3600, function () use ($id) {
+                return $this->model->with(['hooks', 'assets'])
+                    ->where('identifier', $id)
+                    ->first();
+            });
+    }
+
+    public function findByName(string $name): ?Plugin
+    {
+        return Cache::tags(['plugins'])
+            ->remember("plugin.name.{$name}", 3600, function () use ($name) {
+                return $this->model->with(['hooks', 'assets'])
+                    ->where('name', $name)
+                    ->first();
+            });
+    }
+
+    public function getEnabled(): Collection
+    {
+        return Cache::tags(['plugins'])
+            ->remember('plugins.enabled',

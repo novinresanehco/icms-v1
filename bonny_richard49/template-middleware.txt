@@ -1,0 +1,121 @@
+<?php
+
+namespace App\Http\Middleware;
+
+use App\Core\Security\SecurityManager;
+use App\Core\Performance\PerformanceMonitor;
+use App\Core\Cache\CacheManager;
+use Closure;
+use Illuminate\Http\Request;
+
+class TemplateSecurityMiddleware
+{
+    private SecurityManager $security;
+    private PerformanceMonitor $monitor;
+    private CacheManager $cache;
+
+    public function __construct(
+        SecurityManager $security,
+        PerformanceMonitor $monitor,
+        CacheManager $cache
+    ) {
+        $this->security = $security;
+        $this->monitor = $monitor;
+        $this->cache = $cache;
+    }
+
+    public function handle(Request $request, Closure $next)
+    {
+        $monitoringId = $this->monitor->startOperation('template.middleware');
+
+        try {
+            $this->validateRequest($request);
+            $this->checkRateLimits($request);
+            $this->validateTemplateAccess($request);
+
+            $response = $next($request);
+
+            $this->validateResponse($response);
+            $this->monitor->endOperation($monitoringId);
+
+            return $response;
+
+        } catch (\Exception $e) {
+            $this->monitor->endOperation($monitoringId);
+            throw $e;
+        }
+    }
+
+    private function validateRequest(Request $request): void
+    {
+        $this->security->validateOperation('template.' . $request->route()->getName());
+        
+        if ($request->has('data')) {
+            $this->validateTemplateData($request->input('data'));
+        }
+    }
+
+    private function validateTemplateData(array $data): void
+    {
+        foreach ($data as $key => $value) {
+            if (is_callable($value)) {
+                throw new SecurityException('Callable values not allowed in template data');
+            }
+
+            if (is_array($value)) {
+                $this->validateTemplateData($value);
+            }
+        }
+    }
+
+    private function checkRateLimits(Request $request): void
+    {
+        $key = sprintf(
+            'template_rate:%s:%s',
+            $request->route()->getName(),
+            $request->ip()
+        );
+
+        $attempts = $this->cache->increment($key);
+        
+        if ($attempts > config('templates.rate_limits.' . $request->method(), 60)) {
+            throw new RateLimitException();
+        }
+    }
+
+    private function validateTemplateAccess(Request $request): void
+    {
+        $template = $request->input('template');
+
+        if (!$this->isAllowedTemplate($template)) {
+            throw new SecurityException('Template access denied');
+        }
+    }
+
+    private function validateResponse($response): void
+    {
+        if ($response->getStatusCode() >= 500) {
+            throw new TemplateException('Template processing failed');
+        }
+    }
+
+    private function isAllowedTemplate(string $template): bool
+    {
+        $allowedPaths = config('templates.allowed_paths', []);
+        $deniedPaths = config('templates.denied_paths', []);
+
+        foreach ($deniedPaths as $path) {
+            if (str_starts_with($template, $path)) {
+                return false;
+            }
+        }
+
+        foreach ($allowedPaths as $path) {
+            if (str_starts_with($template, $path)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+}

@@ -1,0 +1,190 @@
+// app/Core/Widget/Optimizers/WidgetOptimizer.php
+<?php
+
+namespace App\Core\Widget\Optimizers;
+
+use App\Core\Widget\Models\Widget;
+
+class WidgetOptimizer
+{
+    public function optimize(Widget $widget): array
+    {
+        $optimizations = [];
+
+        // Cache optimization
+        if ($this->shouldOptimizeCache($widget)) {
+            $optimizations['cache'] = $this->optimizeCache($widget);
+        }
+
+        // Query optimization 
+        if ($this->shouldOptimizeQueries($widget)) {
+            $optimizations['queries'] = $this->optimizeQueries($widget);
+        }
+
+        // Resource optimization
+        if ($this->shouldOptimizeResources($widget)) {
+            $optimizations['resources'] = $this->optimizeResources($widget);
+        }
+
+        return $optimizations;
+    }
+
+    protected function shouldOptimizeCache(Widget $widget): bool
+    {
+        $metrics = $this->getCacheMetrics($widget);
+        return $metrics['hit_rate'] < 0.8;
+    }
+
+    protected function shouldOptimizeQueries(Widget $widget): bool
+    {
+        $metrics = $this->getQueryMetrics($widget);
+        return $metrics['average_queries'] > 10;
+    }
+
+    protected function shouldOptimizeResources(Widget $widget): bool
+    {
+        $metrics = $this->getResourceMetrics($widget);
+        return $metrics['memory_usage'] > 50;
+    }
+
+    protected function getCacheMetrics(Widget $widget): array
+    {
+        // Implementation
+        return [];
+    }
+
+    protected function getQueryMetrics(Widget $widget): array
+    {
+        // Implementation
+        return [];
+    }
+
+    protected function getResourceMetrics(Widget $widget): array 
+    {
+        // Implementation
+        return [];
+    }
+}
+
+// app/Core/Widget/Optimizers/WidgetCacheOptimizer.php
+namespace App\Core\Widget\Optimizers;
+
+use App\Core\Widget\Models\Widget;
+
+class WidgetCacheOptimizer
+{
+    public function optimizeCache(Widget $widget): array
+    {
+        $recommendations = [];
+
+        // Analyze cache usage patterns
+        $cachePatterns = $this->analyzeCachePatterns($widget);
+
+        // Suggest cache TTL adjustments
+        if ($cachePatterns['volatility'] < 0.2) {
+            $recommendations[] = [
+                'type' => 'ttl_increase',
+                'current' => $widget->cache_ttl,
+                'suggested' => min($widget->cache_ttl * 2, 86400),
+                'reason' => 'Low data volatility detected'
+            ];
+        }
+
+        // Suggest cache key strategy
+        if ($cachePatterns['key_conflicts'] > 0) {
+            $recommendations[] = [
+                'type' => 'key_strategy',
+                'suggested' => 'Implement more granular cache keys',
+                'reason' => 'Cache key conflicts detected'
+            ];
+        }
+
+        return $recommendations;
+    }
+
+    protected function analyzeCachePatterns(Widget $widget): array
+    {
+        // Implementation
+        return [];
+    }
+}
+
+// app/Core/Widget/Optimizers/WidgetQueryOptimizer.php
+namespace App\Core\Widget\Optimizers;
+
+use App\Core\Widget\Models\Widget;
+
+class WidgetQueryOptimizer 
+{
+    public function optimizeQueries(Widget $widget): array
+    {
+        $recommendations = [];
+
+        // Analyze query patterns
+        $queryPatterns = $this->analyzeQueryPatterns($widget);
+
+        // Suggest index optimizations
+        foreach ($queryPatterns['missing_indexes'] as $table => $columns) {
+            $recommendations[] = [
+                'type' => 'add_index',
+                'table' => $table,
+                'columns' => $columns,
+                'reason' => 'Frequently queried columns without index'
+            ];
+        }
+
+        // Suggest eager loading
+        if (!empty($queryPatterns['n_plus_one'])) {
+            $recommendations[] = [
+                'type' => 'eager_loading',
+                'relations' => $queryPatterns['n_plus_one'],
+                'reason' => 'N+1 query pattern detected'
+            ];
+        }
+
+        return $recommendations;
+    }
+
+    protected function analyzeQueryPatterns(Widget $widget): array
+    {
+        // Implementation
+        return [];
+    }
+}
+
+// app/Core/Widget/Optimizers/WidgetResourceOptimizer.php
+namespace App\Core\Widget\Optimizers;
+
+use App\Core\Widget\Models\Widget;
+
+class WidgetResourceOptimizer
+{
+    public function optimizeResources(Widget $widget): array
+    {
+        $recommendations = [];
+
+        // Analyze resource usage
+        $resourceUsage = $this->analyzeResourceUsage($widget);
+
+        // Memory optimizations
+        if ($resourceUsage['memory']['excessive_usage']) {
+            $recommendations[] = [
+                'type' => 'memory_optimization',
+                'suggestions' => $resourceUsage['memory']['optimization_suggestions'],
+                'reason' => 'High memory usage detected'
+            ];
+        }
+
+        // CPU optimizations
+        if ($resourceUsage['cpu']['high_load']) {
+            $recommendations[] = [
+                'type' => 'cpu_optimization',
+                'suggestions' => $resourceUsage['cpu']['optimization_suggestions'],
+                'reason' => 'High CPU load detected'
+            ];
+        }
+
+        return $recommendations;
+    }
+
+    protected function analyzeResourceUsage(Widget $widget):

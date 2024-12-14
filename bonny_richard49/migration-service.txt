@@ -1,0 +1,211 @@
+<?php
+
+namespace App\Core\Database;
+
+use App\Core\Interfaces\{
+    MigrationInterface,
+    BackupServiceInterface
+};
+use Illuminate\Support\Facades\{DB, Schema};
+use Psr\Log\LoggerInterface;
+
+class MigrationService implements MigrationInterface
+{
+    private BackupServiceInterface $backup;
+    private LoggerInterface $logger;
+    private array $config;
+
+    private const BATCH_SIZE = 1000;
+    private const TIMEOUT = 300;
+    private const MAX_RETRIES = 3;
+
+    public function __construct(
+        BackupServiceInterface $backup,
+        LoggerInterface $logger
+    ) {
+        $this->backup = $backup;
+        $this->logger = $logger;
+        $this->config = config('database.migrations');
+    }
+
+    public function migrate(array $migrations): bool
+    {
+        try {
+            // Create backup before migrations
+            $backupId = $this->backup->createBackup();
+            
+            DB::beginTransaction();
+
+            foreach ($migrations as $migration) {
+                $this->executeMigration($migration);
+            }
+
+            // Record successful migration
+            $this->recordMigration($migrations);
+
+            DB::commit();
+            
+            return true;
+        } catch (\Exception $e) {
+            DB::rollBack();
+            
+            // Restore from backup on failure
+            $this->backup->restore($backupId);
+            
+            $this->handleMigrationError($e, $migrations);
+            throw $e;
+        }
+    }
+
+    public function rollback(string $version): bool
+    {
+        try {
+            // Create backup before rollback 
+            $backupId = $this->backup->createBackup();
+            
+            DB::beginTransaction();
+
+            $migrations = $this->getRollbackMigrations($version);
+            foreach ($migrations as $migration) {
+                $this->executeRollback($migration);
+            }
+
+            // Record successful rollback
+            $this->recordRollback($version);
+
+            DB::commit();
+            
+            return true;
+        } catch (\Exception $e) {
+            DB::rollBack();
+            
+            // Restore from backup on failure
+            $this->backup->restore($backupId);
+            
+            $this->handleRollbackError($e, $version);
+            throw $e;
+        }
+    }
+
+    public function reset(): bool 
+    {
+        try {
+            // Create backup before reset
+            $backupId = $this->backup->createBackup();
+            
+            DB::beginTransaction();
+
+            // Drop all tables
+            Schema::dropAllTables();
+
+            // Reset migrations table
+            Schema::dropIfExists('migrations');
+            $this->createMigrationsTable();
+
+            DB::commit();
+            
+            $this->logger->info('Database reset completed');
+            return true;
+        } catch (\Exception $e) {
+            DB::rollBack();
+            
+            // Restore from backup on failure
+            $this->backup->restore($backupId);
+            
+            $this->handleResetError($e);
+            throw $e;
+        }
+    }
+
+    protected function executeMigration(array $migration): void
+    {
+        $this->logger->info('Executing migration', [
+            'name' => $migration['name'],
+            'version' => $migration['version']
+        ]);
+
+        // Execute migration in batches if needed
+        if ($this->requiresBatching($migration)) {
+            $this->executeBatchedMigration($migration);
+        } else {
+            $this->executeSingleMigration($migration);
+        }
+
+        $this->logger->info('Migration completed', [
+            'name' => $migration['name'],
+            'version' => $migration['version']
+        ]);
+    }
+
+    protected function executeRollback(array $migration): void
+    {
+        $this->logger->info('Executing rollback', [
+            'name' => $migration['name'],
+            'version' => $migration['version']
+        ]);
+
+        if ($this->requiresBatching($migration)) {
+            $this->executeBatchedRollback($migration);
+        } else {
+            $this->executeSingleRollback($migration);
+        }
+
+        $this->logger->info('Rollback completed', [
+            'name' => $migration['name'],
+            'version' => $migration['version']
+        ]);
+    }
+
+    protected function executeBatchedMigration(array $migration): void
+    {
+        $total = $this->getRecordCount($migration['table']);
+        $batches = ceil($total / self::BATCH_SIZE);
+
+        for ($i = 0; $i < $batches; $i++) {
+            $offset = $i * self::BATCH_SIZE;
+            
+            $records = DB::table($migration['table'])
+                ->offset($offset)
+                ->limit(self::BATCH_SIZE)
+                ->get();
+
+            foreach ($records as $record) {
+                $this->processSingleRecord($record, $migration);
+            }
+        }
+    }
+
+    protected function executeBatchedRollback(array $migration): void
+    {
+        $total = $this->getRecordCount($migration['table']);
+        $batches = ceil($total / self::BATCH_SIZE);
+
+        for ($i = 0; $i < $batches; $i++) {
+            $offset = $i * self::BATCH_SIZE;
+            
+            $records = DB::table($migration['table'])
+                ->offset($offset)
+                ->limit(self::BATCH_SIZE)
+                ->get();
+
+            foreach ($records as $record) {
+                $this->rollbackSingleRecord($record, $migration);
+            }
+        }
+    }
+
+    protected function executeSingleMigration(array $migration): void
+    {
+        if (isset($migration['up'])) {
+            eval($migration['up']);
+        } else {
+            throw new \RuntimeException('Migration up method not defined');
+        }
+    }
+
+    protected function executeSingleRollback(array $migration): void
+    {
+        if (isset($migration['down'])) {
+            eval($migration['down']);
+        } else {
+            throw new \RuntimeException('

@@ -1,0 +1,168 @@
+// app/Core/Widget/Enums/WidgetType.php
+<?php
+
+namespace App\Core\Widget\Enums;
+
+enum WidgetType: string
+{
+    case CONTENT = 'content';
+    case MENU = 'menu';
+    case SOCIAL = 'social';
+    case CUSTOM = 'custom';
+
+    public function label(): string
+    {
+        return match($this) {
+            self::CONTENT => 'Content Widget',
+            self::MENU => 'Menu Widget',
+            self::SOCIAL => 'Social Widget',
+            self::CUSTOM => 'Custom Widget'
+        };
+    }
+
+    public function hasSettings(): bool
+    {
+        return match($this) {
+            self::CONTENT, self::MENU, self::SOCIAL => true,
+            default => false
+        };
+    }
+
+    public function defaultSettings(): array
+    {
+        return match($this) {
+            self::CONTENT => [
+                'show_title' => true,
+                'show_date' => true,
+                'max_items' => 5
+            ],
+            self::MENU => [
+                'depth' => 1,
+                'show_description' => false
+            ],
+            self::SOCIAL => [
+                'show_icons' => true,
+                'target' => '_blank'
+            ],
+            default => []
+        };
+    }
+}
+
+// app/Core/Widget/Enums/WidgetArea.php
+<?php
+
+namespace App\Core\Widget\Enums;
+
+enum WidgetArea: string
+{
+    case SIDEBAR = 'sidebar';
+    case FOOTER = 'footer';
+    case HEADER = 'header';
+    case CONTENT = 'content';
+
+    public function label(): string
+    {
+        return match($this) {
+            self::SIDEBAR => 'Sidebar',
+            self::FOOTER => 'Footer',
+            self::HEADER => 'Header',
+            self::CONTENT => 'Content Area'
+        };
+    }
+
+    public function maxWidgets(): int
+    {
+        return match($this) {
+            self::SIDEBAR => 5,
+            self::FOOTER => 4,
+            self::HEADER => 2,
+            self::CONTENT => 10
+        };
+    }
+
+    public function allowedTypes(): array
+    {
+        return match($this) {
+            self::SIDEBAR => [WidgetType::CONTENT, WidgetType::MENU],
+            self::FOOTER => [WidgetType::MENU, WidgetType::SOCIAL],
+            self::HEADER => [WidgetType::MENU],
+            self::CONTENT => [WidgetType::CONTENT, WidgetType::CUSTOM]
+        };
+    }
+}
+
+// app/Core/Widget/Enums/WidgetStatus.php
+<?php
+
+namespace App\Core\Widget\Enums;
+
+enum WidgetStatus: string
+{
+    case ACTIVE = 'active';
+    case INACTIVE = 'inactive';
+    case DRAFT = 'draft';
+    case SCHEDULED = 'scheduled';
+
+    public function label(): string
+    {
+        return match($this) {
+            self::ACTIVE => 'Active',
+            self::INACTIVE => 'Inactive',
+            self::DRAFT => 'Draft',
+            self::SCHEDULED => 'Scheduled'
+        };
+    }
+
+    public function color(): string
+    {
+        return match($this) {
+            self::ACTIVE => 'green',
+            self::INACTIVE => 'red',
+            self::DRAFT => 'gray',
+            self::SCHEDULED => 'blue'
+        };
+    }
+
+    public function isVisible(): bool
+    {
+        return match($this) {
+            self::ACTIVE => true,
+            default => false
+        };
+    }
+}
+
+// app/Core/Widget/Enums/WidgetPermission.php
+<?php
+
+namespace App\Core\Widget\Enums;
+
+enum WidgetPermission: string
+{
+    case VIEW = 'view_widget';
+    case CREATE = 'create_widget';
+    case UPDATE = 'update_widget';
+    case DELETE = 'delete_widget';
+    case MANAGE = 'manage_widget';
+
+    public function label(): string
+    {
+        return match($this) {
+            self::VIEW => 'View Widget',
+            self::CREATE => 'Create Widget',
+            self::UPDATE => 'Update Widget',
+            self::DELETE => 'Delete Widget',
+            self::MANAGE => 'Manage Widget'
+        };
+    }
+
+    public function requires(): array
+    {
+        return match($this) {
+            self::MANAGE => [self::VIEW, self::CREATE, self::UPDATE, self::DELETE],
+            self::UPDATE, self::DELETE => [self::VIEW],
+            default => []
+        };
+    }
+}

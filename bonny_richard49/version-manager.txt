@@ -1,0 +1,154 @@
+<?php
+
+namespace App\Core\Versioning;
+
+class VersionManager implements VersionInterface
+{
+    private ContentRepository $content;
+    private ValidationService $validator;
+    private CacheManager $cache;
+
+    public function createVersion(array $data): string
+    {
+        // Generate version ID
+        $versionId = $this->generateVersionId();
+
+        // Store version
+        $this->storeVersion($versionId, $data);
+
+        // Clear version cache
+        $this->clearVersionCache($data['id'] ?? null);
+
+        return $versionId;
+    }
+
+    public function createDeletionVersion(int $contentId): string
+    {
+        // Get current content
+        $content = $this->content->find($contentId);
+        if (!$content) {
+            throw new VersionException('Content not found');
+        }
+
+        // Create deletion version
+        $versionId = $this->generateVersionId();
+
+        $this->storeVersion($versionId, array_merge($content, [
+            'deleted_at' => time(),
+            'status' => 'deleted'
+        ]));
+
+        return $versionId;
+    }
+
+    public function createPublishedVersion(int $contentId): string
+    {
+        // Get current content
+        $content = $this->content->find($contentId);
+        if (!$content) {
+            throw new VersionException('Content not found');
+        }
+
+        // Validate publishable state
+        $this->validator->validatePublishable($content);
+
+        // Create published version
+        $versionId = $this->generateVersionId();
+
+        $this->storeVersion($versionId, array_merge($content, [
+            'published_at' => time(),
+            'status' => 'published'
+        ]));
+
+        return $versionId;
+    }
+
+    public function getVersion(string $versionId): ?array
+    {
+        // Try cache first
+        $cached = $this->cache->getVersion($versionId);
+        if ($cached) {
+            return $cached;
+        }
+
+        // Get from storage
+        $version = $this->findVersion($versionId);
+        if ($version) {
+            $this->cache->storeVersion($versionId, $version);
+        }
+
+        return $version;
+    }
+
+    public function restoreVersion(int $contentId, string $versionId): array
+    {
+        // Get version
+        $version = $this->getVersion($versionId);
+        if (!$version) {
+            throw new VersionException('Version not found');
+        }
+
+        // Validate restorable state
+        $this->validator->validateRestorable($version);
+
+        // Create new version from old version
+        $newVersionId = $this->createVersion($version);
+
+        // Update content
+        $restored = $this->content->update($contentId, array_merge(
+            $version,
+            ['version_id' => $newVersionId]
+        ));
+
+        // Clear caches
+        $this->clearVersionCache($contentId);
+        $this->cache->removeContent($contentId);
+
+        return $restored;
+    }
+
+    private function generateVersionId(): string
+    {
+        return uniqid('v_', true);
+    }
+
+    private function storeVersion(string $versionId, array $data): void
+    {
+        // Store version data
+        $this->content->storeVersion($versionId, array_merge($data, [
+            'created_at' => time(),
+            'checksum' => $this->generateChecksum($data)
+        ]));
+
+        // Cache version
+        $this->cache->storeVersion($versionId, $data);
+    }
+
+    private function findVersion(string $versionId): ?array
+    {
+        return $this->content->findVersion($versionId);
+    }
+
+    private function clearVersionCache(int $contentId = null): void
+    {
+        if ($contentId) {
+            $this->cache->removeContentVersions($contentId);
+        }
+    }
+
+    private function generateChecksum(array $data): string
+    {
+        return hash('sha256', serialize($data));
+    }
+}
+
+interface VersionInterface
+{
+    public function createVersion(array $data): string;
+    public function createDeletionVersion(int $contentId): string;
+    public function createPublishedVersion(int $contentId): string;
+    public function getVersion(string $versionId): ?array;
+    public function restoreVersion(int $contentId, string $versionId): array;
+}
+
+class VersionException extends \Exception {}

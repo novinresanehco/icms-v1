@@ -1,0 +1,218 @@
+// app/Core/Widget/Cache/WidgetCacheManager.php
+<?php
+
+namespace App\Core\Widget\Cache;
+
+use App\Core\Widget\Models\Widget;
+use Illuminate\Support\Facades\Cache;
+use App\Core\Widget\Events\WidgetCacheCleared;
+
+class WidgetCacheManager
+{
+    public function getWidgetCache(Widget $widget, string $key)
+    {
+        $cacheKey = $this->buildCacheKey($widget, $key);
+        return Cache::tags($this->getCacheTags($widget))->get($cacheKey);
+    }
+
+    public function setWidgetCache(Widget $widget, string $key, $value, ?int $ttl = null): void
+    {
+        $cacheKey = $this->buildCacheKey($widget, $key);
+        $tags = $this->getCacheTags($widget);
+
+        Cache::tags($tags)->put(
+            $cacheKey,
+            $value,
+            $ttl ?? $this->getDefaultTTL($widget)
+        );
+    }
+
+    public function clearWidgetCache(Widget $widget): void
+    {
+        Cache::tags($this->getCacheTags($widget))->flush();
+        event(new WidgetCacheCleared($widget->area));
+    }
+
+    public function clearAreaCache(string $area): void
+    {
+        Cache::tags(["area:{$area}"])->flush();
+        event(new WidgetCacheCleared($area));
+    }
+
+    public function clearAllWidgetCache(): void
+    {
+        Cache::tags(['widgets'])->flush();
+        event(new WidgetCacheCleared());
+    }
+
+    protected function buildCacheKey(Widget $widget, string $key): string
+    {
+        return "widget:{$widget->id}:{$key}";
+    }
+
+    protected function getCacheTags(Widget $widget): array
+    {
+        return [
+            'widgets',
+            "widget:{$widget->id}",
+            "area:{$widget->area}",
+            "type:{$widget->type}"
+        ];
+    }
+
+    protected function getDefaultTTL(Widget $widget): int
+    {
+        return $widget->cache_ttl ?? config('widgets.cache.ttl', 3600);
+    }
+}
+
+// app/Core/Widget/Cache/WidgetCacheService.php
+<?php
+
+namespace App\Core\Widget\Cache;
+
+use App\Core\Widget\Models\Widget;
+use Illuminate\Support\Facades\Cache;
+
+class WidgetCacheService
+{
+    protected array $cacheConfig;
+
+    public function __construct(array $config = [])
+    {
+        $this->cacheConfig = $config;
+    }
+
+    public function remember(Widget $widget, string $key, \Closure $callback)
+    {
+        if (!$this->shouldCache($widget)) {
+            return $callback();
+        }
+
+        return Cache::tags($this->getCacheTags($widget))
+            ->remember(
+                $this->getCacheKey($widget, $key),
+                $this->getCacheDuration($widget),
+                $callback
+            );
+    }
+
+    public function forget(Widget $widget, string $key): void
+    {
+        Cache::tags($this->getCacheTags($widget))
+            ->forget($this->getCacheKey($widget, $key));
+    }
+
+    public function flush(Widget $widget): void
+    {
+        Cache::tags($this->getCacheTags($widget))->flush();
+    }
+
+    protected function shouldCache(Widget $widget): bool
+    {
+        if (!config('widgets.cache.enabled', true)) {
+            return false;
+        }
+
+        if ($widget->cache_ttl === 0) {
+            return false;
+        }
+
+        return true;
+    }
+
+    protected function getCacheKey(Widget $widget, string $key): string
+    {
+        return "widget:{$widget->id}:{$key}";
+    }
+
+    protected function getCacheTags(Widget $widget): array
+    {
+        return [
+            'widgets',
+            "widget:{$widget->id}",
+            "area:{$widget->area}",
+            "type:{$widget->type}"
+        ];
+    }
+
+    protected function getCacheDuration(Widget $widget): int
+    {
+        return $widget->cache_ttl 
+            ?? config('widgets.cache.ttl', 3600);
+    }
+}
+
+// app/Core/Widget/Cache/WidgetCacheInvalidator.php
+<?php
+
+namespace App\Core\Widget\Cache;
+
+use App\Core\Widget\Models\Widget;
+use Illuminate\Support\Collection;
+
+class WidgetCacheInvalidator
+{
+    protected array $invalidationRules = [];
+
+    public function __construct(protected WidgetCacheService $cacheService)
+    {
+    }
+
+    public function addInvalidationRule(string $event, callable $callback): void
+    {
+        $this->invalidationRules[$event][] = $callback;
+    }
+
+    public function invalidate(string $event, Widget $widget): void
+    {
+        if (!isset($this->invalidationRules[$event])) {
+            return;
+        }
+
+        $this->runInvalidationRules($event, $widget);
+    }
+
+    public function invalidateByArea(string $area): void
+    {
+        Widget::where('area', $area)
+            ->get()
+            ->each(fn(Widget $widget) => $this->cacheService->flush($widget));
+    }
+
+    public function invalidateByType(string $type): void
+    {
+        Widget::where('type', $type)
+            ->get()
+            ->each(fn(Widget $widget) => $this->cacheService->flush($widget));
+    }
+
+    protected function runInvalidationRules(string $event, Widget $widget): void
+    {
+        Collection::make($this->invalidationRules[$event])
+            ->each(fn($rule) => $rule($widget, $this->cacheService));
+    }
+}
+
+// config/widgets.php
+<?php
+
+return [
+    'cache' => [
+        'enabled' => env('WIDGET_CACHE_ENABLED', true),
+        'ttl' => env('WIDGET_CACHE_TTL', 3600),
+        'tags' => [
+            'enabled' => env('WIDGET_CACHE_TAGS_ENABLED', true),
+        ],
+    ],
+    
+    'invalidation' => [
+        'events' => [
+            'widget.updated' => true,
+            'widget.deleted' => true,
+            'widget.moved' => true,
+            'widget.settings_updated' => true,
+            'widget.visibility_updated' => true,
+        ],
+    ],
+];

@@ -1,0 +1,252 @@
+<?php
+
+namespace App\Core\Categories;
+
+use App\Core\Security\SecurityManager;
+use App\Core\Cache\CacheManager;
+use App\Core\Validation\ValidationService;
+use App\Core\Events\EventDispatcher;
+use Illuminate\Support\Facades\DB;
+
+class CategoryManager
+{
+    private SecurityManager $security;
+    private CacheManager $cache;
+    private ValidationService $validator;
+    private EventDispatcher $events;
+
+    public function __construct(
+        SecurityManager $security,
+        CacheManager $cache,
+        ValidationService $validator,
+        EventDispatcher $events
+    ) {
+        $this->security = $security;
+        $this->cache = $cache;
+        $this->validator = $validator;
+        $this->events = $events;
+    }
+
+    public function getHierarchy(): array
+    {
+        return $this->cache->remember('categories.hierarchy', function() {
+            return $this->buildHierarchy();
+        });
+    }
+
+    public function create(array $data): Category
+    {
+        DB::beginTransaction();
+
+        try {
+            $this->validator->validate($data, [
+                'name' => 'required|string|max:255|unique:categories',
+                'parent_id' => 'nullable|exists:categories,id',
+                'order' => 'nullable|integer',
+                'status' => 'required|in:active,inactive'
+            ]);
+
+            $category = new Category($data);
+            $category->save();
+
+            $this->updateHierarchy($category);
+            $this->cache->tags(['categories'])->flush();
+
+            DB::commit();
+            $this->events->dispatch('category.created', $category);
+
+            return $category;
+
+        } catch (\Exception $e) {
+            DB::rollBack();
+            throw $e;
+        }
+    }
+
+    public function update(int $id, array $data): Category
+    {
+        DB::beginTransaction();
+
+        try {
+            $category = Category::findOrFail($id);
+
+            $this->validator->validate($data, [
+                'name' => "sometimes|string|max:255|unique:categories,name,{$id}",
+                'parent_id' => 'nullable|exists:categories,id',
+                'order' => 'nullable|integer',
+                'status' => 'sometimes|in:active,inactive'
+            ]);
+
+            $oldParentId = $category->parent_id;
+            $category->update($data);
+
+            if ($oldParentId !== $category->parent_id) {
+                $this->updateHierarchy($category);
+            }
+
+            $this->cache->tags(['categories'])->flush();
+
+            DB::commit();
+            $this->events->dispatch('category.updated', $category);
+
+            return $category;
+
+        } catch (\Exception $e) {
+            DB::rollBack();
+            throw $e;
+        }
+    }
+
+    public function delete(int $id): bool
+    {
+        DB::beginTransaction();
+
+        try {
+            $category = Category::findOrFail($id);
+            
+            if ($category->hasChildren()) {
+                throw new CategoryException('Cannot delete category with children');
+            }
+
+            if ($category->hasContent()) {
+                throw new CategoryException('Cannot delete category with content');
+            }
+
+            $deleted = $category->delete();
+            $this->cache->tags(['categories'])->flush();
+
+            DB::commit();
+            $this->events->dispatch('category.deleted', $category);
+
+            return $deleted;
+
+        } catch (\Exception $e) {
+            DB::rollBack();
+            throw $e;
+        }
+    }
+
+    public function move(int $id, ?int $parentId, int $order): void
+    {
+        DB::beginTransaction();
+
+        try {
+            $category = Category::findOrFail($id);
+            $oldParentId = $category->parent_id;
+
+            $category->parent_id = $parentId;
+            $category->order = $order;
+            $category->save();
+
+            if ($oldParentId !== $parentId) {
+                $this->updateHierarchy($category);
+            }
+
+            $this->reorderSiblings($category);
+            $this->cache->tags(['categories'])->flush();
+
+            DB::commit();
+            $this->events->dispatch('category.moved', $category);
+
+        } catch (\Exception $e) {
+            DB::rollBack();
+            throw $e;
+        }
+    }
+
+    public function validatePath(array $path): bool
+    {
+        $hierarchy = $this->getHierarchy();
+        $current = $hierarchy;
+
+        foreach ($path as $categoryId) {
+            if (!isset($current[$categoryId])) {
+                return false;
+            }
+            $current = $current[$categoryId]['children'] ?? [];
+        }
+
+        return true;
+    }
+
+    private function buildHierarchy(): array
+    {
+        $categories = Category::orderBy('order')
+            ->get(['id', 'name', 'parent_id', 'order', 'status'])
+            ->toArray();
+
+        $indexed = [];
+        foreach ($categories as $category) {
+            $indexed[$category['id']] = array_merge($category, ['children' => []]);
+        }
+
+        $hierarchy = [];
+        foreach ($indexed as $id => $category) {
+            if (is_null($category['parent_id'])) {
+                $hierarchy[$id] = $category;
+            } else {
+                $indexed[$category['parent_id']]['children'][$id] = $category;
+            }
+        }
+
+        return $hierarchy;
+    }
+
+    private function updateHierarchy(Category $category): void
+    {
+        if ($category->parent_id) {
+            $parent = Category::findOrFail($category->parent_id);
+            $this->validateCategoryDepth($category, $parent);
+        }
+
+        $this->validateCircularReference($category);
+    }
+
+    private function validateCategoryDepth(Category $category, Category $parent, int $depth = 1): void
+    {
+        if ($depth >= config('categories.max_depth', 5)) {
+            throw new CategoryException('Maximum category depth exceeded');
+        }
+
+        if ($parent->parent_id) {
+            $grandparent = Category::findOrFail($parent->parent_id);
+            $this->validateCategoryDepth($category, $grandparent, $depth + 1);
+        }
+    }
+
+    private function validateCircularReference(Category $category): void
+    {
+        if (!$category->parent_id) {
+            return;
+        }
+
+        $parentId = $category->parent_id;
+        $visited = [$category->id];
+
+        while ($parentId) {
+            if (in_array($parentId, $visited)) {
+                throw new CategoryException('Circular reference detected');
+            }
+
+            $visited[] = $parentId;
+            $parent = Category::find($parentId);
+            $parentId = $parent ? $parent->parent_id : null;
+        }
+    }
+
+    private function reorderSiblings(Category $category): void
+    {
+        $siblings = Category::where('parent_id', $category->parent_id)
+            ->where('id', '!=', $category->id)
+            ->orderBy('order')
+            ->get();
+
+        $order = 1;
+        foreach ($siblings as $sibling) {
+            if ($order === $category->order) {
+                $order++;
+            }
+            $sibling->update(['order' => $order++]);
+        }
+    }
+}

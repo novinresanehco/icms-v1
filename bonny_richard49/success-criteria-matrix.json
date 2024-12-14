@@ -1,0 +1,64 @@
+SUCCESS_CRITERIA_MATRIX = {
+    "SECURITY_REQUIREMENTS": {
+        "AUTHENTICATION": {
+            "MULTI_FACTOR": "MANDATORY",
+            "SESSION_MANAGEMENT": "REAL_TIME",
+            "BREACH_DETECTION": "IMMEDIATE",
+            "VALIDATION": "CONTINUOUS"
+        },
+        "AUTHORIZATION": {
+            "ROLE_BASED": "ENFORCED",
+            "PERMISSION_CHECK": "REAL_TIME",
+            "ACCESS_CONTROL": "STRICT",
+            "AUDIT_LOG": "COMPLETE"
+        },
+        "DATA_PROTECTION": {
+            "ENCRYPTION": "AES_256",
+            "INTEGRITY": "VERIFIED",
+            "BACKUP": "REAL_TIME",
+            "RECOVERY": "AUTOMATED"
+        }
+    },
+
+    "PERFORMANCE_CRITERIA": {
+        "RESPONSE_TIME": {
+            "API_CALLS": "<100ms",
+            "PAGE_LOAD": "<200ms",
+            "DATABASE": "<50ms",
+            "CACHE": "<10ms"
+        },
+        "RESOURCE_USAGE": {
+            "CPU": "<70%",
+            "MEMORY": "<80%",
+            "STORAGE": "<75%",
+            "NETWORK": "<60%"
+        },
+        "SCALABILITY": {
+            "USERS": ">1000",
+            "REQUESTS": ">500/s",
+            "DATA_VOLUME": "UNLIMITED",
+            "ERROR_RATE": "<0.01%"
+        }
+    },
+
+    "QUALITY_STANDARDS": {
+        "CODE_QUALITY": {
+            "PSR_12": "MANDATORY",
+            "TYPING": "STRICT",
+            "DOCUMENTATION": "COMPLETE",
+            "TESTING": "100%"
+        },
+        "RELIABILITY": {
+            "UPTIME": "99.99%",
+            "FAILOVER": "AUTOMATIC",
+            "BACKUP": "CONTINUOUS",
+            "RECOVERY": "<15min"
+        },
+        "MAINTAINABILITY": {
+            "ARCHITECTURE": "CLEAN",
+            "COUPLING": "LOOSE",
+            "COMPLEXITY": "LOW",
+            "DOCUMENTATION": "COMPREHENSIVE"
+        }
+    }
+}

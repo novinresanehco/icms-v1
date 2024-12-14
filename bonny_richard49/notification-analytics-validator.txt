@@ -1,0 +1,139 @@
+<?php
+
+namespace App\Core\Notification\Analytics\Validation;
+
+use App\Core\Notification\Analytics\Exceptions\ValidationException;
+
+class AnalyticsValidator
+{
+    private array $rules;
+    private array $messages;
+
+    public function __construct()
+    {
+        $this->rules = config('analytics.validation.rules');
+        $this->messages = config('analytics.validation.messages');
+    }
+
+    public function validateMetrics(array $metrics): void
+    {
+        $errors = [];
+
+        foreach ($this->rules['metrics'] as $metric => $rules) {
+            if (isset($metrics[$metric])) {
+                $errors = array_merge(
+                    $errors,
+                    $this->validateMetric($metric, $metrics[$metric], $rules)
+                );
+            } elseif ($rules['required'] ?? false) {
+                $errors[] = "Required metric '{$metric}' is missing";
+            }
+        }
+
+        if (!empty($errors)) {
+            throw new ValidationException(
+                'Metrics validation failed',
+                $errors
+            );
+        }
+    }
+
+    public function validateTimeRange(array $range): void
+    {
+        $errors = [];
+
+        if (!isset($range['start'])) {
+            $errors[] = 'Start time is required';
+        }
+
+        if (!isset($range['end'])) {
+            $errors[] = 'End time is required';
+        }
+
+        if (isset($range['start'], $range['end']) && $range['start'] > $range['end']) {
+            $errors[] = 'Start time must be before end time';
+        }
+
+        if (!empty($errors)) {
+            throw new ValidationException(
+                'Time range validation failed',
+                $errors
+            );
+        }
+    }
+
+    public function validateAggregation(array $config): void
+    {
+        $errors = [];
+
+        foreach ($this->rules['aggregation'] as $param => $rules) {
+            if (isset($config[$param])) {
+                $errors = array_merge(
+                    $errors,
+                    $this->validateParameter($param, $config[$param], $rules)
+                );
+            } elseif ($rules['required'] ?? false) {
+                $errors[] = "Required parameter '{$param}' is missing";
+            }
+        }
+
+        if (!empty($errors)) {
+            throw new ValidationException(
+                'Aggregation configuration validation failed',
+                $errors
+            );
+        }
+    }
+
+    private function validateMetric(string $metric, $value, array $rules): array
+    {
+        $errors = [];
+
+        foreach ($rules as $rule => $constraint) {
+            switch ($rule) {
+                case 'type':
+                    if (!$this->validateType($value, $constraint)) {
+                        $errors[] = $this->formatMessage(
+                            'type',
+                            $metric,
+                            $constraint
+                        );
+                    }
+                    break;
+
+                case 'min':
+                    if ($value < $constraint) {
+                        $errors[] = $this->formatMessage(
+                            'min',
+                            $metric,
+                            $constraint
+                        );
+                    }
+                    break;
+
+                case 'max':
+                    if ($value > $constraint) {
+                        $errors[] = $this->formatMessage(
+                            'max',
+                            $metric,
+                            $constraint
+                        );
+                    }
+                    break;
+
+                case 'in':
+                    if (!in_array($value, $constraint)) {
+                        $errors[] = $this->formatMessage(
+                            'in',
+                            $metric,
+                            implode(', ', $constraint)
+                        );
+                    }
+                    break;
+            }
+        }
+
+        return $errors;
+    }
+
+    private function validateParameter(string $param,

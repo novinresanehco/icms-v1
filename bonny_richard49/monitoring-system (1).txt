@@ -1,0 +1,147 @@
+<?php
+
+namespace App\Core\Monitoring;
+
+class CriticalMonitoringSystem implements MonitoringInterface
+{
+    private MetricsCollector $metrics;
+    private AlertSystem $alerts;
+    private AuditLogger $audit;
+    private ThresholdManager $thresholds;
+
+    public function startOperation(string $type): string
+    {
+        $operationId = $this->generateOperationId();
+        
+        $this->audit->logOperationStart($type, $operationId);
+        $this->metrics->initializeMetrics($operationId);
+        
+        return $operationId;
+    }
+
+    public function trackOperation(
+        string $operationId,
+        callable $operation
+    ): mixed {
+        $startTime = microtime(true);
+        
+        try {
+            $result = $operation();
+            
+            $this->recordSuccess(
+                $operationId,
+                microtime(true) - $startTime
+            );
+            
+            return $result;
+            
+        } catch (\Exception $e) {
+            $this->recordFailure($operationId, $e);
+            throw $e;
+        }
+    }
+
+    public function endOperation(string $operationId): void
+    {
+        $this->metrics->finalizeMetrics($operationId);
+        $this->audit->logOperationEnd($operationId);
+    }
+
+    public function checkThresholds(): array
+    {
+        $violations = [];
+        
+        foreach ($this->thresholds->getAll() as $threshold) {
+            if ($this->isThresholdViolated($threshold)) {
+                $violations[] = $threshold;
+                $this->handleThresholdViolation($threshold);
+            }
+        }
+        
+        return $violations;
+    }
+
+    private function isThresholdViolated(Threshold $threshold): bool
+    {
+        $currentValue = $this->metrics->getValue(
+            $threshold->getMetric()
+        );
+        
+        return $threshold->isViolated($currentValue);
+    }
+
+    private function handleThresholdViolation(Threshold $threshold): void
+    {
+        $this->alerts->triggerAlert(
+            new ThresholdAlert($threshold)
+        );
+        
+        $this->audit->logThresholdViolation($threshold);
+        
+        if ($threshold->requiresImmediate()) {
+            $this->executeEmergencyProcedures($threshold);
+        }
+    }
+
+    private function executeEmergencyProcedures(Threshold $threshold): void
+    {
+        try {
+            match ($threshold->getType()) {
+                'memory' => $this->handleMemoryEmergency(),
+                'cpu' => $this->handleCpuEmergency(),
+                'response_time' => $this->handleResponseTimeEmergency(),
+                default => $this->handleGenericEmergency($threshold)
+            };
+        } catch (\Exception $e) {
+            $this->audit->logEmergencyFailure($threshold, $e);
+            throw $e;
+        }
+    }
+
+    private function recordSuccess(string $id, float $duration): void
+    {
+        $this->metrics->recordSuccess($id, [
+            'duration' => $duration,
+            'memory' => memory_get_usage(true),
+            'timestamp' => microtime(true)
+        ]);
+    }
+
+    private function recordFailure(string $id, \Exception $e): void
+    {
+        $this->metrics->recordFailure($id, [
+            'error' => $e->getMessage(),
+            'code' => $e->getCode(),
+            'timestamp' => microtime(true)
+        ]);
+    }
+
+    private function generateOperationId(): string
+    {
+        return uniqid('op_', true);
+    }
+}
+
+class ThresholdManager
+{
+    private array $thresholds = [];
+
+    public function addThreshold(Threshold $threshold): void
+    {
+        $this->thresholds[] = $threshold;
+    }
+
+    public function getAll(): array
+    {
+        return $this->thresholds;
+    }
+}
+
+class Threshold
+{
+    private string $metric;
+    private string $type;
+    private mixed $limit;
+    private bool $immediate;
+
+    public function isViolated(

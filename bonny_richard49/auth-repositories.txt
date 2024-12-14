@@ -1,0 +1,244 @@
+<?php
+
+namespace App\Core\Auth\Repositories;
+
+use App\Core\Auth\Models\User;
+use App\Core\Auth\Exceptions\UserNotFoundException;
+use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Pagination\LengthAwarePaginator;
+
+class UserRepository
+{
+    protected User $model;
+
+    public function __construct(User $model)
+    {
+        $this->model = $model;
+    }
+
+    public function create(array $data): User
+    {
+        $user = $this->model->create($data);
+        $this->clearCache();
+        return $user;
+    }
+
+    public function update(int $id, array $data): User
+    {
+        $user = $this->find($id);
+        
+        if (!$user) {
+            throw new UserNotFoundException("User with ID {$id} not found");
+        }
+
+        $user->update($data);
+        $this->clearCache($id);
+        return $user;
+    }
+
+    public function delete(int $id): bool
+    {
+        $user = $this->find($id);
+        
+        if (!$user) {
+            throw new UserNotFoundException("User with ID {$id} not found");
+        }
+
+        $result = $user->delete();
+        $this->clearCache($id);
+        return $result;
+    }
+
+    public function find(int $id): ?User
+    {
+        return Cache::tags(['users'])
+            ->remember("user.{$id}", 3600, function () use ($id) {
+                return $this->model->find($id);
+            });
+    }
+
+    public function findByEmail(string $email): ?User
+    {
+        return Cache::tags(['users'])
+            ->remember("user.email.{$email}", 3600, function () use ($email) {
+                return $this->model->where('email', $email)->first();
+            });
+    }
+
+    public function paginate(int $perPage = 15, array $filters = []): LengthAwarePaginator
+    {
+        $query = $this->model->newQuery();
+
+        if (isset($filters['search'])) {
+            $query->where(function ($q) use ($filters) {
+                $q->where('name', 'like', "%{$filters['search']}%")
+                  ->orWhere('email', 'like', "%{$filters['search']}%");
+            });
+        }
+
+        if (isset($filters['role'])) {
+            $query->whereHas('roles', function ($q) use ($filters) {
+                $q->where('name', $filters['role']);
+            });
+        }
+
+        if (isset($filters['is_active'])) {
+            $query->where('is_active', $filters['is_active']);
+        }
+
+        return $query->latest()->paginate($perPage);
+    }
+
+    protected function clearCache(?int $userId = null): void
+    {
+        if ($userId) {
+            Cache::tags(['users'])->forget("user.{$userId}");
+            Cache::tags(["user-{$userId}"])->flush();
+        } else {
+            Cache::tags(['users'])->flush();
+        }
+    }
+}
+
+namespace App\Core\Auth\Repositories;
+
+use App\Core\Auth\Models\Role;
+use App\Core\Auth\Exceptions\RoleNotFoundException;
+use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\Cache;
+
+class RoleRepository
+{
+    protected Role $model;
+
+    public function __construct(Role $model)
+    {
+        $this->model = $model;
+    }
+
+    public function create(array $data): Role
+    {
+        $role = $this->model->create($data);
+        $this->clearCache();
+        return $role;
+    }
+
+    public function update(int $id, array $data): Role
+    {
+        $role = $this->find($id);
+        
+        if (!$role) {
+            throw new RoleNotFoundException("Role with ID {$id} not found");
+        }
+
+        $role->update($data);
+        $this->clearCache();
+        return $role;
+    }
+
+    public function delete(int $id): bool
+    {
+        $role = $this->find($id);
+        
+        if (!$role) {
+            throw new RoleNotFoundException("Role with ID {$id} not found");
+        }
+
+        $result = $role->delete();
+        $this->clearCache();
+        return $result;
+    }
+
+    public function find(int $id): ?Role
+    {
+        return Cache::tags(['roles'])
+            ->remember("role.{$id}", 3600, function () use ($id) {
+                return $this->model->find($id);
+            });
+    }
+
+    public function findByName(string $name): ?Role
+    {
+        return Cache::tags(['roles'])
+            ->remember("role.name.{$name}", 3600, function () use ($name) {
+                return $this->model->where('name', $name)->first();
+            });
+    }
+
+    public function all(): Collection
+    {
+        return Cache::tags(['roles'])
+            ->remember('roles.all', 3600, function () {
+                return $this->model->all();
+            });
+    }
+
+    protected function clearCache(): void
+    {
+        Cache::tags(['roles'])->flush();
+    }
+}
+
+namespace App\Core\Auth\Repositories;
+
+use App\Core\Auth\Models\Permission;
+use App\Core\Auth\Exceptions\PermissionNotFoundException;
+use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\Cache;
+
+class PermissionRepository
+{
+    protected Permission $model;
+
+    public function __construct(Permission $model)
+    {
+        $this->model = $model;
+    }
+
+    public function create(array $data): Permission
+    {
+        $permission = $this->model->create($data);
+        $this->clearCache();
+        return $permission;
+    }
+
+    public function update(int $id, array $data): Permission
+    {
+        $permission = $this->find($id);
+        
+        if (!$permission) {
+            throw new PermissionNotFoundException("Permission with ID {$id} not found");
+        }
+
+        $permission->update($data);
+        $this->clearCache();
+        return $permission;
+    }
+
+    public function delete(int $id): bool
+    {
+        $permission = $this->find($id);
+        
+        if (!$permission) {
+            throw new PermissionNotFoundException("Permission with ID {$id} not found");
+        }
+
+        $result = $permission->delete();
+        $this->clearCache();
+        return $result;
+    }
+
+    public function find(int $id): ?Permission
+    {
+        return Cache::tags(['permissions'])
+            ->remember("permission.{$id}", 3600, function () use ($id) {
+                return $this->model->find($id);
+            });
+    }
+
+    public function findByName(string $name): ?Permission
+    {
+        return Cache::tags(['permissions'])
+            ->remember("permission.name.{$name}", 3600, function () use ($name) {
+                return $this->model->where('name', $name)->

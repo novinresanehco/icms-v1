@@ -1,0 +1,167 @@
+// app/Core/Error/Monitoring/ErrorMonitor.php
+<?php
+
+namespace App\Core\Error\Monitoring;
+
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Redis;
+use App\Core\Error\Monitoring\Collectors\ErrorMetricsCollector;
+use Throwable;
+
+class ErrorMonitor
+{
+    private ErrorMetricsCollector $metrics;
+    
+    public function __construct(ErrorMetricsCollector $metrics)
+    {
+        $this->metrics = $metrics;
+    }
+
+    public function track(Throwable $error): void
+    {
+        $this->incrementErrorCount($error);
+        $this->trackErrorRate($error);
+        $this->collectMetrics($error);
+    }
+
+    private function incrementErrorCount(Throwable $error): void
+    {
+        $type = get_class($error);
+        Redis::hincrby('error_counts', $type, 1);
+    }
+
+    private function trackErrorRate(Throwable $error): void
+    {
+        $type = get_class($error);
+        $key = "error_rate:{$type}";
+        
+        Redis::zadd($key, time(), time());
+        Redis::zremrangebyscore($key, 0, time() - 3600);
+    }
+
+    private function collectMetrics(Throwable $error): void
+    {
+        $this->metrics->collect([
+            'type' => get_class($error),
+            'message' => $error->getMessage(),
+            'file' => $error->getFile(),
+            'line' => $error->getLine(),
+            'trace' => $error->getTraceAsString()
+        ]);
+    }
+
+    public function getErrorCounts(): array
+    {
+        return Redis::hgetall('error_counts') ?: [];
+    }
+
+    public function getErrorRate(string $type, int $minutes = 60): int
+    {
+        $key = "error_rate:{$type}";
+        return Redis::zcount($key, time() - ($minutes * 60), time());
+    }
+}
+
+// app/Core/Error/Monitoring/Collectors/ErrorMetricsCollector.php
+<?php
+
+namespace App\Core\Error\Monitoring\Collectors;
+
+use App\Core\Metrics\MetricsCollector;
+
+class ErrorMetricsCollector
+{
+    private MetricsCollector $metrics;
+
+    public function __construct(MetricsCollector $metrics)
+    {
+        $this->metrics = $metrics;
+    }
+
+    public function collect(array $error): void
+    {
+        $type = str_replace('\\', '_', $error['type']);
+        
+        $this->metrics->increment("errors_total");
+        $this->metrics->increment("errors_by_type.{$type}");
+        
+        $this->metrics->gauge("errors_last_occurrence.{$type}", time());
+        
+        $this->metrics->histogram("error_trace_length", strlen($error['trace']));
+    }
+}
+
+// app/Core/Error/Monitoring/Alert/AlertManager.php
+<?php
+
+namespace App\Core\Error\Monitoring\Alert;
+
+use App\Core\Error\Monitoring\ErrorMonitor;
+use App\Core\Notification\NotificationSender;
+use Throwable;
+
+class AlertManager
+{
+    private ErrorMonitor $monitor;
+    private NotificationSender $sender;
+    private array $thresholds;
+
+    public function __construct(
+        ErrorMonitor $monitor,
+        NotificationSender $sender,
+        array $thresholds = []
+    ) {
+        $this->monitor = $monitor;
+        $this->sender = $sender;
+        $this->thresholds = $thresholds;
+    }
+
+    public function checkThresholds(Throwable $error): void
+    {
+        $type = get_class($error);
+        
+        if (!isset($this->thresholds[$type])) {
+            return;
+        }
+
+        $rate = $this->monitor->getErrorRate($type);
+        
+        if ($rate >= $this->thresholds[$type]) {
+            $this->sendAlert($type, $rate);
+        }
+    }
+
+    private function sendAlert(string $type, int $rate): void
+    {
+        $this->sender->sendUrgent('admin', [
+            'type' => 'error_threshold_exceeded',
+            'error_type' => $type,
+            'error_rate' => $rate,
+            'threshold' => $this->thresholds[$type],
+            'timestamp' => now()
+        ]);
+    }
+}
+
+// app/Core/Error/Monitoring/Report/ErrorReportGenerator.php
+<?php
+
+namespace App\Core\Error\Monitoring\Report;
+
+use App\Core\Error\Monitoring\ErrorMonitor;
+use Carbon\Carbon;
+
+class ErrorReportGenerator
+{
+    private ErrorMonitor $monitor;
+
+    public function __construct(ErrorMonitor $monitor)
+    {
+        $this->monitor = $monitor;
+    }
+
+    public function generateDailyReport(): array
+    {
+        return [
+            'date' => Carbon::now()->toDateString(),
+            'total_errors'

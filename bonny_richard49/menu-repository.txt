@@ -1,0 +1,364 @@
+<?php
+
+namespace App\Core\Menu\Repository;
+
+use App\Core\Menu\Models\Menu;
+use App\Core\Menu\Models\MenuItem;
+use App\Core\Menu\DTO\MenuData;
+use App\Core\Menu\DTO\MenuItemData;
+use App\Core\Menu\Events\MenuCreated;
+use App\Core\Menu\Events\MenuUpdated;
+use App\Core\Menu\Events\MenuDeleted;
+use App\Core\Menu\Events\MenuItemCreated;
+use App\Core\Menu\Events\MenuItemUpdated;
+use App\Core\Menu\Events\MenuItemDeleted;
+use App\Core\Menu\Events\MenuItemMoved;
+use App\Core\Menu\Exceptions\MenuNotFoundException;
+use App\Core\Shared\Repository\BaseRepository;
+use App\Core\Shared\Cache\CacheManagerInterface;
+use Illuminate\Database\Eloquent\Collection;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Event;
+
+class MenuRepository extends BaseRepository implements MenuRepositoryInterface
+{
+    protected const CACHE_KEY = 'menus';
+    protected const CACHE_TTL = 3600; // 1 hour
+
+    public function __construct(CacheManagerInterface $cache)
+    {
+        parent::__construct($cache);
+        $this->setCacheKey(self::CACHE_KEY);
+        $this->setCacheTtl(self::CACHE_TTL);
+    }
+
+    protected function getModelClass(): string
+    {
+        return Menu::class;
+    }
+
+    public function findBySlug(string $slug): ?Menu
+    {
+        return $this->cache->remember(
+            $this->getCacheKey("slug:{$slug}"),
+            fn() => $this->model->where('slug', $slug)
+                               ->with(['items' => fn($q) => $q->orderBy('order')])
+                               ->first()
+        );
+    }
+
+    public function getWithItems(int $id): Menu
+    {
+        return $this->cache->remember(
+            $this->getCacheKey("with_items:{$id}"),
+            fn() => $this->model->with(['items' => fn($q) => $q->orderBy('order')])
+                               ->findOrFail($id)
+        );
+    }
+
+    public function createMenuItem(int $menuId, MenuItemData $data): MenuItem
+    {
+        DB::beginTransaction();
+        try {
+            $menu = $this->findOrFail($menuId);
+
+            // Set order if not provided
+            if (!isset($data->order)) {
+                $data->order = $this->getNextItemOrder($menuId, $data->parentId);
+            }
+
+            // Create menu item
+            $item = new MenuItem([
+                'title' => $data->title,
+                'url' => $data->url,
+                'type' => $data->type,
+                'parent_id' => $data->parentId,
+                'order' => $data->order,
+                'target' => $data->target,
+                'classes' => $data->classes,
+                'permissions' => $data->permissions,
+                'is_active' => $data->isActive,
+                'metadata' => $data->metadata,
+            ]);
+
+            $menu->items()->save($item);
+
+            // Clear cache
+            $this->clearCache();
+
+            // Dispatch event
+            Event::dispatch(new MenuItemCreated($item));
+
+            DB::commit();
+            return $item;
+        } catch (\Exception $e) {
+            DB::rollBack();
+            throw $e;
+        }
+    }
+
+    public function updateMenuItem(int $itemId, MenuItemData $data): MenuItem
+    {
+        DB::beginTransaction();
+        try {
+            $item = MenuItem::findOrFail($itemId);
+
+            $item->update([
+                'title' => $data->title,
+                'url' => $data->url,
+                'type' => $data->type,
+                'parent_id' => $data->parentId,
+                'order' => $data->order ?? $item->order,
+                'target' => $data->target,
+                'classes' => $data->classes,
+                'permissions' => $data->permissions,
+                'is_active' => $data->isActive,
+                'metadata' => array_merge($item->metadata ?? [], $data->metadata ?? []),
+            ]);
+
+            // Clear cache
+            $this->clearCache();
+
+            // Dispatch event
+            Event::dispatch(new MenuItemUpdated($item));
+
+            DB::commit();
+            return $item->fresh();
+        } catch (\Exception $e) {
+            DB::rollBack();
+            throw $e;
+        }
+    }
+
+    public function deleteMenuItem(int $itemId): bool
+    {
+        DB::beginTransaction();
+        try {
+            $item = MenuItem::findOrFail($itemId);
+
+            // Delete children first
+            $item->children()->delete();
+
+            // Delete item
+            $deleted = $item->delete();
+
+            // Clear cache
+            $this->clearCache();
+
+            // Dispatch event
+            Event::dispatch(new MenuItemDeleted($item));
+
+            DB::commit();
+            return $deleted;
+        } catch (\Exception $e) {
+            DB::rollBack();
+            throw $e;
+        }
+    }
+
+    public function updateItemsOrder(int $menuId, array $order): bool
+    {
+        DB::beginTransaction();
+        try {
+            foreach ($order as $position => $itemId) {
+                MenuItem::where('id', $itemId)
+                       ->where('menu_id', $menuId)
+                       ->update(['order' => $position + 1]);
+            }
+
+            // Clear cache
+            $this->clearCache();
+
+            DB::commit();
+            return true;
+        } catch (\Exception $e) {
+            DB::rollBack();
+            throw $e;
+        }
+    }
+
+    public function moveMenuItem(int $itemId, ?int $parentId, int $order): MenuItem
+    {
+        DB::beginTransaction();
+        try {
+            $item = MenuItem::findOrFail($itemId);
+            $oldParentId = $item->parent_id;
+
+            $item->update([
+                'parent_id' => $parentId,
+                'order' => $order
+            ]);
+
+            // Reorder siblings
+            $this->reorderSiblings($item->menu_id, $parentId);
+            if ($oldParentId !== $parentId) {
+                $this->reorderSiblings($item->menu_id, $oldParentId);
+            }
+
+            // Clear cache
+            $this->clearCache();
+
+            // Dispatch event
+            Event::dispatch(new MenuItemMoved($item, $oldParentId));
+
+            DB::commit();
+            return $item->fresh();
+        } catch (\Exception $e) {
+            DB::rollBack();
+            throw $e;
+        }
+    }
+
+    public function getActiveMenus(): Collection
+    {
+        return $this->cache->remember(
+            $this->getCacheKey('active'),
+            fn() => $this->model->where('is_active', true)
+                               ->with(['items' => fn($q) => $q->where('is_active', true)->orderBy('order')])
+                               ->get()
+        );
+    }
+
+    public function getMenuTree(int $menuId): array
+    {
+        return $this->cache->remember(
+            $this->getCacheKey("tree:{$menuId}"),
+            function() use ($menuId) {
+                $menu = $this->getWithItems($menuId);
+                return $this->buildMenuTree($menu->items);
+            }
+        );
+    }
+
+    public function cloneMenu(int $menuId, array $overrides = []): Menu
+    {
+        DB::beginTransaction();
+        try {
+            $originalMenu = $this->getWithItems($menuId);
+            
+            // Clone menu
+            $newMenu = $this->model->create(array_merge([
+                'name' => $originalMenu->name . ' (Copy)',
+                'slug' => $originalMenu->slug . '-copy',
+                'description' => $originalMenu->description,
+                'is_active' => false,
+                'settings' => $originalMenu->settings,
+            ], $overrides));
+
+            // Clone items
+            foreach ($originalMenu->items as $item) {
+                $this->cloneMenuItem($item, $newMenu->id);
+            }
+
+            // Clear cache
+            $this->clearCache();
+
+            DB::commit();
+            return $newMenu->fresh(['items']);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            throw $e;
+        }
+    }
+
+    public function getMenuStats(int $menuId): array
+    {
+        return $this->cache->remember(
+            $this->getCacheKey("stats:{$menuId}"),
+            function() use ($menuId) {
+                $menu = $this->getWithItems($menuId);
+                return [
+                    'total_items' => $menu->items->count(),
+                    'active_items' => $menu->items->where('is_active', true)->count(),
+                    'max_depth' => $this->calculateMenuDepth($menu->items),
+                    'item_types' => $menu->items->groupBy('type')
+                        ->map(fn($items) => $items->count())
+                        ->toArray(),
+                ];
+            }
+        );
+    }
+
+    public function exportMenu(int $menuId): array
+    {
+        $menu = $this->getWithItems($menuId);
+        return [
+            'name' => $menu->name,
+            'slug' => $menu->slug,
+            'description' => $menu->description,
+            'settings' => $menu->settings,
+            'items' => $this->exportMenuItems($menu->items)
+        ];
+    }
+
+    public function importMenu(array $data): Menu
+    {
+        DB::beginTransaction();
+        try {
+            // Create menu
+            $menu = $this->model->create([
+                'name' => $data['name'],
+                'slug' => $data['slug'],
+                'description' => $data['description'] ?? null,
+                'settings' => $data['settings'] ?? [],
+            ]);
+
+            // Import items
+            if (!empty($data['items'])) {
+                $this->importMenuItems($data['items'], $menu->id);
+            }
+
+            // Clear cache
+            $this->clearCache();
+
+            DB::commit();
+            return $menu->fresh(['items']);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            throw $e;
+        }
+    }
+
+    protected function getNextItemOrder(int $menuId, ?int $parentId): int
+    {
+        return MenuItem::where('menu_id', $menuId)
+                      ->where('parent_id', $parentId)
+                      ->max('order') + 1;
+    }
+
+    protected function reorderSiblings(int $menuId, ?int $parentId): void
+    {
+        $items = MenuItem::where('menu_id', $menuId)
+                        ->where('parent_id', $parentId)
+                        ->orderBy('order')
+                        ->get();
+
+        foreach ($items as $index => $item) {
+            if ($item->order !== $index + 1) {
+                $item->update(['order' => $index + 1]);
+            }
+        }
+    }
+
+    protected function buildMenuTree(Collection $items, ?int $parentId = null): array
+    {
+        $tree = [];
+
+        foreach ($items->where('parent_id', $parentId) as $item) {
+            $node = $item->toArray();
+            $children = $this->buildMenuTree($items, $item->id);
+            if (!empty($children)) {
+                $node['children'] = $children;
+            }
+            $tree[] = $node;
+        }
+
+        return $tree;
+    }
+
+    protected function calculateMenuDepth(Collection $items, ?int $parentId = null, int $currentDepth = 1): int
+    {
+        $maxDepth = $currentDepth;
+
+        foreach ($items->where('parent_id', $parentId) as $item) {
+            $childDepth = $this->calculateMenuDepth($

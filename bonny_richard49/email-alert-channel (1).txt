@@ -1,0 +1,104 @@
+<?php
+
+namespace App\Core\Notification\Analytics\Channels;
+
+use App\Core\Notification\Analytics\Contracts\{
+    AlertChannelInterface,
+    AlertChannelConfigurationInterface,
+    AlertChannelFormatterInterface,
+    AlertChannelRateLimiterInterface,
+    AlertChannelRetryInterface
+};
+use App\Core\Notification\Analytics\Mail\AlertMail;
+use Illuminate\Support\Facades\{Mail, Cache, Log};
+use Exception;
+
+class EmailAlertChannel implements 
+    AlertChannelInterface,
+    AlertChannelConfigurationInterface,
+    AlertChannelFormatterInterface,
+    AlertChannelRateLimiterInterface,
+    AlertChannelRetryInterface
+{
+    private array $config;
+    private const CACHE_PREFIX = 'email_alert_channel:';
+    private const MAX_ATTEMPTS = 3;
+    private const RATE_LIMIT_KEY = 'email_rate_limit';
+    private const RATE_LIMIT_MINUTES = 5;
+    private const RATE_LIMIT_ATTEMPTS = 50;
+
+    public function __construct(array $config = [])
+    {
+        $this->config = array_merge($this->getDefaultConfig(), $config);
+    }
+
+    public function send(string $message, array $data = [], array $options = []): array
+    {
+        if ($this->isRateLimited(self::RATE_LIMIT_KEY)) {
+            throw new Exception('Rate limit exceeded for Email channel');
+        }
+
+        $recipients = $this->getRecipients($options);
+        if (empty($recipients)) {
+            throw new Exception('No recipients specified for email alert');
+        }
+
+        $attempts = 0;
+        $messageId = null;
+
+        do {
+            try {
+                $mail = new AlertMail(
+                    $this->formatMessage($message, $data, $options)
+                );
+
+                Mail::to($recipients)
+                    ->cc($options['cc'] ?? [])
+                    ->bcc($options['bcc'] ?? [])
+                    ->send($mail);
+
+                $messageId = $mail->messageId ?? uniqid('alert_');
+                $this->hit(self::RATE_LIMIT_KEY);
+
+                return [
+                    'success' => true,
+                    'message_id' => $messageId,
+                    'recipients' => $recipients
+                ];
+
+            } catch (Exception $e) {
+                $attempts++;
+                
+                if (!$this->shouldRetry($e, $attempts)) {
+                    throw $e;
+                }
+
+                sleep($this->getRetryDelay($attempts));
+            }
+        } while ($attempts < $this->getMaxAttempts());
+
+        throw new Exception("Failed to send email alert after {$attempts} attempts");
+    }
+
+    public function isAvailable(): bool
+    {
+        try {
+            $testEmail = new AlertMail([
+                'subject' => 'Test Email',
+                'content' => 'Testing email channel availability'
+            ]);
+
+            Mail::fake()->send($testEmail);
+            return true;
+        } catch (Exception $e) {
+            Log::error('Email channel unavailable', ['error' => $e->getMessage()]);
+            return false;
+        }
+    }
+
+    public function getConfig(): array
+    {
+        return $this->config;
+    }
+
+    public function validateData(array $data):

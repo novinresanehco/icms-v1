@@ -1,0 +1,121 @@
+<?php
+
+namespace App\Core\Notification\Analytics\Services;
+
+use PhpOffice\PhpSpreadsheet\Chart\{
+    Chart,
+    DataSeries,
+    DataSeriesValues,
+    Legend,
+    PlotArea,
+    Title
+};
+
+trait ReportChartGenerationTrait
+{
+    private function addDeliveryTrendsChart(array $metrics): void
+    {
+        $dataSheet = $this->spreadsheet->getSheetByName('Delivery Metrics');
+        $lastRow = $dataSheet->getHighestRow();
+
+        // Create the chart
+        $series = new DataSeries(
+            DataSeries::TYPE_LINECHART,
+            null,
+            range(0, 4),
+            [
+                new DataSeriesValues('String', 'Delivery Metrics!$B$1:$F$1', null, 5),
+            ],
+            [
+                new DataSeriesValues('String', 'Delivery Metrics!$A$2:$A$' . $lastRow, null, $lastRow - 1),
+            ],
+            [
+                new DataSeriesValues('Number', 'Delivery Metrics!$B$2:$B$' . $lastRow, null, $lastRow - 1),
+                new DataSeriesValues('Number', 'Delivery Metrics!$C$2:$C$' . $lastRow, null, $lastRow - 1),
+                new DataSeriesValues('Number', 'Delivery Metrics!$D$2:$D$' . $lastRow, null, $lastRow - 1),
+                new DataSeriesValues('Number', 'Delivery Metrics!$E$2:$E$' . $lastRow, null, $lastRow - 1),
+                new DataSeriesValues('Number', 'Delivery Metrics!$F$2:$F$' . $lastRow, null, $lastRow - 1),
+            ]
+        );
+
+        $plotArea = new PlotArea(null, [$series]);
+        $legend = new Legend(Legend::POSITION_RIGHT, null, false);
+
+        $chart = new Chart(
+            'Delivery Trends',
+            new Title('Notification Delivery Trends'),
+            $legend,
+            $plotArea
+        );
+
+        $chart->setTopLeftPosition('A' . ($lastRow + 2));
+        $chart->setBottomRightPosition('H' . ($lastRow + 20));
+
+        $dataSheet->addChart($chart);
+    }
+
+    private function addPerformanceDistributionChart(array $metrics): void
+    {
+        $dataSheet = $this->spreadsheet->getSheetByName('Performance Metrics');
+        $lastRow = $dataSheet->getHighestRow();
+
+        // Create the chart
+        $series = new DataSeries(
+            DataSeries::TYPE_PIECHART,
+            null,
+            range(0, count($metrics['aggregates']['delivery_time_distribution']) - 1),
+            [
+                new DataSeriesValues('String', 'Performance Metrics!$B$' . ($lastRow + 3) . ':$B$' . ($lastRow + 5), null, 3),
+            ],
+            [],
+            [
+                new DataSeriesValues('Number', 'Performance Metrics!$C$' . ($lastRow + 3) . ':$C$' . ($lastRow + 5), null, 3),
+            ]
+        );
+
+        $plotArea = new PlotArea(null, [$series]);
+        $legend = new Legend(Legend::POSITION_RIGHT, null, false);
+
+        $chart = new Chart(
+            'Delivery Time Distribution',
+            new Title('Delivery Time Distribution'),
+            $legend,
+            $plotArea
+        );
+
+        $chart->setTopLeftPosition('A' . ($lastRow + 2));
+        $chart->setBottomRightPosition('H' . ($lastRow + 20));
+
+        $dataSheet->addChart($chart);
+    }
+
+    private function addEngagementFunnelChart(array $metrics): void
+    {
+        $dataSheet = $this->spreadsheet->getSheetByName('Engagement Metrics');
+        $lastRow = $dataSheet->getHighestRow();
+
+        // Create the chart
+        $series = new DataSeries(
+            DataSeries::TYPE_BARCHART,
+            DataSeries::GROUPING_CLUSTERED,
+            range(0, 3),
+            [
+                new DataSeriesValues('String', 'Engagement Metrics!$C$1:$F$1', null, 4),
+            ],
+            [
+                new DataSeriesValues('String', 'Engagement Metrics!$B$2:$B$' . $lastRow, null, $lastRow - 1),
+            ],
+            [
+                new DataSeriesValues('Number', 'Engagement Metrics!$C$2:$C$' . $lastRow, null, $lastRow - 1),
+                new DataSeriesValues('Number', 'Engagement Metrics!$D$2:$D$' . $lastRow, null, $lastRow - 1),
+                new DataSeriesValues('Number', 'Engagement Metrics!$E$2:$E$' . $lastRow, null, $lastRow - 1),
+                new DataSeriesValues('Number', 'Engagement Metrics!$F$2:$F$' . $lastRow, null, $lastRow - 1),
+            ]
+        );
+
+        $plotArea = new PlotArea(null, [$series]);
+        $legend = new Legend(Legend::POSITION_RIGHT, null, false);
+
+        $chart = new Chart(
+            'Engagement Funnel',
+            new

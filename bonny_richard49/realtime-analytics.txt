@@ -1,0 +1,176 @@
+<?php
+
+namespace App\Core\Analytics\RealTime;
+
+class RealTimeAnalytics
+{
+    protected EventBroadcaster $broadcaster;
+    protected MetricsAggregator $aggregator;
+    protected ConnectionManager $connections;
+    protected DataStore $store;
+
+    public function __construct(
+        EventBroadcaster $broadcaster,
+        MetricsAggregator $aggregator,
+        ConnectionManager $connections,
+        DataStore $store
+    ) {
+        $this->broadcaster = $broadcaster;
+        $this->aggregator = $aggregator;
+        $this->connections = $connections;
+        $this->store = $store;
+    }
+
+    public function trackInRealTime(AnalyticsEvent $event): void
+    {
+        // Store event
+        $this->store->storeEvent($event);
+
+        // Update metrics
+        $this->updateMetrics($event);
+
+        // Broadcast to connected clients
+        $this->broadcastEvent($event);
+
+        // Update aggregates
+        $this->updateAggregates($event);
+    }
+
+    public function getActiveUsers(): array
+    {
+        return $this->store->getActiveUsers();
+    }
+
+    public function getCurrentMetrics(): array
+    {
+        return [
+            'active_users' => $this->store->getActiveUsersCount(),
+            'page_views' => $this->store->getPageViewsCount(),
+            'events' => $this->store->getEventsCount(),
+            'top_pages' => $this->store->getTopPages(),
+            'user_actions' => $this->store->getRecentUserActions()
+        ];
+    }
+
+    protected function updateMetrics(AnalyticsEvent $event): void
+    {
+        switch ($event->type) {
+            case 'pageview':
+                $this->store->incrementPageViews();
+                $this->store->updateActivePage($event->data['page']);
+                break;
+
+            case 'user_action':
+                $this->store->recordUserAction($event);
+                break;
+
+            case 'event':
+                $this->store->recordEvent($event);
+                break;
+        }
+    }
+
+    protected function broadcastEvent(AnalyticsEvent $event): void
+    {
+        $this->broadcaster->broadcast('analytics', [
+            'type' => $event->type,
+            'data' => $this->formatEventData($event)
+        ]);
+    }
+
+    protected function updateAggregates(AnalyticsEvent $event): void
+    {
+        $this->aggregator->updateRealTimeAggregates($event);
+    }
+
+    protected function formatEventData(AnalyticsEvent $event): array
+    {
+        return [
+            'type' => $event->type,
+            'timestamp' => $event->timestamp->toIso8601String(),
+            'data' => $event->data,
+            'metrics' => $this->getCurrentMetrics()
+        ];
+    }
+}
+
+class DataStore
+{
+    protected RedisConnection $redis;
+    protected int $expirationTime = 3600; // 1 hour
+
+    public function __construct(RedisConnection $redis)
+    {
+        $this->redis = $redis;
+    }
+
+    public function storeEvent(AnalyticsEvent $event): void
+    {
+        $key = "analytics:events:{$event->type}:" . $event->timestamp->format('Y-m-d-H');
+        $this->redis->zadd($key, $event->timestamp->timestamp, json_encode($event));
+        $this->redis->expire($key, $this->expirationTime);
+    }
+
+    public function getActiveUsersCount(): int
+    {
+        return $this->redis->scard('analytics:active_users');
+    }
+
+    public function getPageViewsCount(): int
+    {
+        return (int) $this->redis->get('analytics:page_views');
+    }
+
+    public function getEventsCount(): int
+    {
+        return (int) $this->redis->get('analytics:events');
+    }
+
+    public function getTopPages(): array
+    {
+        return $this->redis->zrevrange('analytics:top_pages', 0, 9, 'WITHSCORES');
+    }
+
+    public function getRecentUserActions(): array
+    {
+        return $this->redis->lrange('analytics:recent_actions', 0, 19);
+    }
+
+    public function incrementPageViews(): void
+    {
+        $this->redis->incr('analytics:page_views');
+    }
+
+    public function updateActivePage(string $page): void
+    {
+        $this->redis->zincrby('analytics:top_pages', 1, $page);
+    }
+
+    public function recordUserAction(AnalyticsEvent $event): void
+    {
+        $this->redis->lpush('analytics:recent_actions', json_encode($event));
+        $this->redis->ltrim('analytics:recent_actions', 0, 19); // Keep last 20 actions
+    }
+
+    public function recordEvent(AnalyticsEvent $event): void
+    {
+        $this->redis->incr('analytics:events');
+    }
+}
+
+namespace App\Core\Analytics\RealTime;
+
+class EventBroadcaster
+{
+    protected BroadcastManager $broadcaster;
+    protected array $channels = [];
+
+    public function __construct(BroadcastManager $broadcaster)
+    {
+        $this->broadcaster = $broadcaster;
+    }
+
+    public function broadcast(string $channel, array $data): void
+    {
+        $this->broadcaster->channel($channel)->broadcast('analytics.event', $data);
+    }

@@ -1,0 +1,149 @@
+// app/Core/Widget/Forms/CreateWidgetForm.php
+<?php
+
+namespace App\Core\Widget\Forms;
+
+use App\Core\Widget\Rules\WidgetIdentifier;
+use Illuminate\Foundation\Http\FormRequest;
+
+class CreateWidgetForm extends FormRequest
+{
+    public function authorize(): bool
+    {
+        return $this->user()->can('create_widgets');
+    }
+
+    public function rules(): array
+    {
+        return [
+            'name' => ['required', 'string', 'max:255'],
+            'identifier' => ['required', 'string', 'max:255', new WidgetIdentifier],
+            'type' => ['required', 'string', 'in:content,menu,social,custom'],
+            'area' => ['required', 'string', 'in:sidebar,footer,header,content'],
+            'settings' => ['nullable', 'array'],
+            'is_active' => ['boolean'],
+            'order' => ['nullable', 'integer', 'min:0'],
+            'cache_ttl' => ['nullable', 'integer', 'min:0']
+        ];
+    }
+
+    public function messages(): array
+    {
+        return [
+            'name.required' => 'Widget name is required',
+            'identifier.required' => 'Widget identifier is required',
+            'type.required' => 'Widget type must be specified',
+            'area.required' => 'Widget area must be specified'
+        ];
+    }
+}
+
+// app/Core/Widget/Forms/UpdateWidgetForm.php
+<?php
+
+namespace App\Core\Widget\Forms;
+
+use App\Core\Widget\Rules\WidgetIdentifier;
+use Illuminate\Foundation\Http\FormRequest;
+
+class UpdateWidgetForm extends FormRequest
+{
+    public function authorize(): bool
+    {
+        return $this->user()->can('edit_widgets');
+    }
+
+    public function rules(): array
+    {
+        return [
+            'name' => ['sometimes', 'required', 'string', 'max:255'],
+            'identifier' => [
+                'sometimes', 
+                'required', 
+                'string', 
+                'max:255', 
+                new WidgetIdentifier($this->route('id'))
+            ],
+            'type' => ['sometimes', 'required', 'string', 'in:content,menu,social,custom'],
+            'area' => ['sometimes', 'required', 'string', 'in:sidebar,footer,header,content'],
+            'settings' => ['sometimes', 'array'],
+            'is_active' => ['sometimes', 'boolean'],
+            'order' => ['nullable', 'integer', 'min:0'],
+            'cache_ttl' => ['nullable', 'integer', 'min:0']
+        ];
+    }
+
+    public function messages(): array
+    {
+        return [
+            'name.required' => 'Widget name is required',
+            'identifier.required' => 'Widget identifier is required',
+            'type.required' => 'Widget type must be specified',
+            'area.required' => 'Widget area must be specified'
+        ];
+    }
+}
+
+// app/Core/Widget/Forms/UpdateWidgetSettingsForm.php
+<?php
+
+namespace App\Core\Widget\Forms;
+
+use Illuminate\Foundation\Http\FormRequest;
+
+class UpdateWidgetSettingsForm extends FormRequest
+{
+    public function authorize(): bool
+    {
+        return $this->user()->can('edit_widgets');
+    }
+
+    public function rules(): array
+    {
+        return [
+            'settings' => ['required', 'array'],
+            'settings.*' => ['required']
+        ];
+    }
+
+    public function messages(): array
+    {
+        return [
+            'settings.required' => 'Widget settings are required',
+            'settings.*.required' => 'Setting value is required'
+        ];
+    }
+}
+
+// app/Core/Widget/Forms/UpdateWidgetVisibilityForm.php
+<?php
+
+namespace App\Core\Widget\Forms;
+
+use Illuminate\Foundation\Http\FormRequest;
+
+class UpdateWidgetVisibilityForm extends FormRequest
+{
+    public function authorize(): bool
+    {
+        return $this->user()->can('edit_widgets');
+    }
+
+    public function rules(): array
+    {
+        return [
+            'visibility_rules' => ['required', 'array'],
+            'visibility_rules.conditions' => ['required', 'array'],
+            'visibility_rules.operator' => ['required', 'string', 'in:and,or']
+        ];
+    }
+
+    public function messages(): array
+    {
+        return [
+            'visibility_rules.required' => 'Visibility rules are required',
+            'visibility_rules.conditions.required' => 'At least one condition is required',
+            'visibility_rules.operator.required' => 'Operator must be specified'
+        ];
+    }
+}

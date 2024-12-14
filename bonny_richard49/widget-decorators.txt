@@ -1,0 +1,204 @@
+// app/Core/Widget/Decorators/WidgetDecorator.php
+<?php
+
+namespace App\Core\Widget\Decorators;
+
+use App\Core\Widget\Models\Widget;
+use App\Core\Widget\Contracts\WidgetInterface;
+
+class WidgetDecorator implements WidgetInterface
+{
+    protected Widget $widget;
+
+    public function __construct(Widget $widget)
+    {
+        $this->widget = $widget;
+    }
+
+    public function render(): string
+    {
+        $content = $this->renderContent();
+        return $this->wrapContent($content);
+    }
+
+    protected function renderContent(): string
+    {
+        return view('widgets.types.' . $this->widget->type, [
+            'widget' => $this->widget,
+            'settings' => $this->widget->settings,
+            'metadata' => $this->widget->metadata
+        ])->render();
+    }
+
+    protected function wrapContent(string $content): string
+    {
+        $classes = $this->getWrapperClasses();
+        $attributes = $this->getWrapperAttributes();
+
+        return "<div class=\"{$classes}\" {$attributes}>{$content}</div>";
+    }
+
+    protected function getWrapperClasses(): string
+    {
+        $classes = ['widget', $this->widget->type . '-widget'];
+        
+        if ($this->widget->settings['wrapper_class'] ?? false) {
+            $classes[] = $this->widget->settings['wrapper_class'];
+        }
+        
+        return implode(' ', $classes);
+    }
+
+    protected function getWrapperAttributes(): string
+    {
+        $attributes = [
+            'data-widget-id' => $this->widget->id,
+            'data-widget-type' => $this->widget->type,
+            'data-widget-area' => $this->widget->area
+        ];
+
+        return collect($attributes)
+            ->map(fn($value, $key) => "{$key}=\"{$value}\"")
+            ->implode(' ');
+    }
+}
+
+// app/Core/Widget/Decorators/CacheableWidgetDecorator.php
+<?php
+
+namespace App\Core\Widget\Decorators;
+
+use App\Core\Widget\Models\Widget;
+use App\Core\Widget\Contracts\WidgetInterface;
+use Illuminate\Support\Facades\Cache;
+
+class CacheableWidgetDecorator implements WidgetInterface
+{
+    protected WidgetInterface $widget;
+    protected int $ttl;
+
+    public function __construct(WidgetInterface $widget, int $ttl = 3600)
+    {
+        $this->widget = $widget;
+        $this->ttl = $ttl;
+    }
+
+    public function render(): string
+    {
+        $cacheKey = $this->getCacheKey();
+
+        return Cache::tags($this->getCacheTags())->remember(
+            $cacheKey,
+            $this->ttl,
+            fn() => $this->widget->render()
+        );
+    }
+
+    protected function getCacheKey(): string
+    {
+        return "widget:{$this->widget->id}:rendered";
+    }
+
+    protected function getCacheTags(): array
+    {
+        return [
+            'widgets',
+            "widget:{$this->widget->id}",
+            "area:{$this->widget->area}",
+            "type:{$this->widget->type}"
+        ];
+    }
+}
+
+// app/Core/Widget/Decorators/AuthorizedWidgetDecorator.php
+<?php
+
+namespace App\Core\Widget\Decorators;
+
+use App\Core\Widget\Models\Widget;
+use App\Core\Widget\Contracts\WidgetInterface;
+use App\Core\Widget\Exceptions\UnauthorizedWidgetException;
+use Illuminate\Support\Facades\Auth;
+
+class AuthorizedWidgetDecorator implements WidgetInterface
+{
+    protected WidgetInterface $widget;
+
+    public function __construct(WidgetInterface $widget)
+    {
+        $this->widget = $widget;
+    }
+
+    public function render(): string
+    {
+        if (!$this->isAuthorized()) {
+            throw new UnauthorizedWidgetException('Unauthorized access to widget');
+        }
+
+        return $this->widget->render();
+    }
+
+    protected function isAuthorized(): bool
+    {
+        $user = Auth::user();
+
+        if (!$user) {
+            return false;
+        }
+
+        foreach ($this->widget->permissions as $permission) {
+            if ($permission['type'] === 'role') {
+                if ($user->hasRole($permission['value'])) {
+                    return true;
+                }
+            } elseif ($permission['type'] === 'permission') {
+                if ($user->can($permission['value'])) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+}
+
+// app/Core/Widget/Decorators/MetricsWidgetDecorator.php
+<?php
+
+namespace App\Core\Widget\Decorators;
+
+use App\Core\Widget\Models\Widget;
+use App\Core\Widget\Contracts\WidgetInterface;
+use App\Core\Widget\Services\WidgetMetricsService;
+
+class MetricsWidgetDecorator implements WidgetInterface
+{
+    protected WidgetInterface $widget;
+    protected WidgetMetricsService $metricsService;
+
+    public function __construct(WidgetInterface $widget, WidgetMetricsService $metricsService)
+    {
+        $this->widget = $widget;
+        $this->metricsService = $metricsService;
+    }
+
+    public function render(): string
+    {
+        $startTime = microtime(true);
+        $content = $this->widget->render();
+        $endTime = microtime(true);
+
+        $this->recordMetrics($startTime, $endTime);
+
+        return $content;
+    }
+
+    protected function recordMetrics(float $startTime, float $endTime): void
+    {
+        $this->metricsService->recordMetrics($this->widget, [
+            'render_time' => ($endTime - $startTime) * 1000,
+            'memory_usage' => memory_get_peak_usage(true),
+            'timestamp' => now()
+        ]);
+    }
+}

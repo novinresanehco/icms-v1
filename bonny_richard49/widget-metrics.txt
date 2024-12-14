@@ -1,0 +1,92 @@
+// app/Core/Widget/Metrics/WidgetMetricsCollector.php
+<?php
+
+namespace App\Core\Widget\Metrics;
+
+use App\Core\Widget\Models\Widget;
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
+use Carbon\Carbon;
+
+class WidgetMetricsCollector
+{
+    protected array $metrics = [];
+
+    public function collect(Widget $widget): array
+    {
+        return [
+            'performance' => $this->collectPerformanceMetrics($widget),
+            'usage' => $this->collectUsageMetrics($widget),
+            'cache' => $this->collectCacheMetrics($widget),
+            'rendering' => $this->collectRenderingMetrics($widget)
+        ];
+    }
+
+    public function recordMetric(Widget $widget, string $metric, $value): void
+    {
+        $key = $this->getMetricKey($widget, $metric);
+        $this->metrics[$key] = $value;
+
+        $this->storeMetric($widget, $metric, $value);
+    }
+
+    protected function collectPerformanceMetrics(Widget $widget): array
+    {
+        return [
+            'average_load_time' => $this->getAverageLoadTime($widget),
+            'peak_memory_usage' => $this->getPeakMemoryUsage($widget),
+            'database_queries' => $this->getDatabaseQueryCount($widget)
+        ];
+    }
+
+    protected function collectUsageMetrics(Widget $widget): array
+    {
+        return [
+            'views' => $this->getViewCount($widget),
+            'unique_views' => $this->getUniqueViewCount($widget),
+            'interaction_rate' => $this->getInteractionRate($widget)
+        ];
+    }
+
+    protected function collectCacheMetrics(Widget $widget): array
+    {
+        return [
+            'hit_rate' => $this->getCacheHitRate($widget),
+            'miss_rate' => $this->getCacheMissRate($widget),
+            'average_cache_time' => $this->getAverageCacheTime($widget)
+        ];
+    }
+
+    protected function collectRenderingMetrics(Widget $widget): array
+    {
+        return [
+            'render_time' => $this->getAverageRenderTime($widget),
+            'error_rate' => $this->getErrorRate($widget),
+            'success_rate' => $this->getSuccessRate($widget)
+        ];
+    }
+
+    protected function storeMetric(Widget $widget, string $metric, $value): void
+    {
+        DB::table('widget_metrics')->insert([
+            'widget_id' => $widget->id,
+            'metric' => $metric,
+            'value' => $value,
+            'recorded_at' => Carbon::now()
+        ]);
+    }
+
+    protected function getMetricKey(Widget $widget, string $metric): string
+    {
+        return "widget:{$widget->id}:metric:{$metric}";
+    }
+
+    protected function getAverageLoadTime(Widget $widget): float
+    {
+        return Cache::remember(
+            "widget:{$widget->id}:metrics:avg_load_time",
+            3600,
+            fn() => DB::table('widget_metrics')
+                ->where('widget_id', $widget->id)
+                ->where('metric', 'load_time')
+                ->where('recorde

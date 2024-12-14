@@ -1,0 +1,141 @@
+// app/Core/Widget/Queue/Jobs/ProcessWidgetJob.php
+<?php
+
+namespace App\Core\Widget\Queue\Jobs;
+
+use App\Core\Widget\Models\Widget;
+use Illuminate\Bus\Queueable;
+use Illuminate\Contracts\Queue\ShouldQueue;
+use Illuminate\Foundation\Bus\Dispatchable;
+use Illuminate\Queue\InteractsWithQueue;
+use Illuminate\Queue\SerializesModels;
+
+class ProcessWidgetJob implements ShouldQueue
+{
+    use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
+
+    public function __construct(
+        private Widget $widget,
+        private array $data = []
+    ) {}
+
+    public function handle(): void
+    {
+        // Implementation
+    }
+}
+
+// app/Core/Widget/Queue/Jobs/OptimizeWidgetJob.php
+<?php
+
+namespace App\Core\Widget\Queue\Jobs;
+
+use App\Core\Widget\Models\Widget;
+use App\Core\Widget\Services\WidgetOptimizer;
+use Illuminate\Bus\Queueable;
+use Illuminate\Contracts\Queue\ShouldQueue;
+use Illuminate\Foundation\Bus\Dispatchable;
+use Illuminate\Queue\InteractsWithQueue;
+use Illuminate\Queue\SerializesModels;
+
+class OptimizeWidgetJob implements ShouldQueue
+{
+    use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
+
+    public function __construct(private Widget $widget)
+    {}
+
+    public function handle(WidgetOptimizer $optimizer): void
+    {
+        $optimizer->optimize($this->widget);
+    }
+}
+
+// app/Core/Widget/Queue/Jobs/CleanupWidgetJob.php
+<?php
+
+namespace App\Core\Widget\Queue\Jobs;
+
+use App\Core\Widget\Models\Widget;
+use Illuminate\Bus\Queueable;
+use Illuminate\Contracts\Queue\ShouldQueue;
+use Illuminate\Foundation\Bus\Dispatchable;
+use Illuminate\Queue\InteractsWithQueue;
+use Illuminate\Queue\SerializesModels;
+
+class CleanupWidgetJob implements ShouldQueue
+{
+    use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
+
+    public function __construct(private Widget $widget)
+    {}
+
+    public function handle(): void
+    {
+        // Implementation
+    }
+}
+
+// app/Core/Widget/Queue/Jobs/ProcessWidgetMetricsJob.php
+<?php
+
+namespace App\Core\Widget\Queue\Jobs;
+
+use App\Core\Widget\Models\Widget;
+use App\Core\Widget\Services\WidgetMetricsService;
+use Illuminate\Bus\Queueable;
+use Illuminate\Contracts\Queue\ShouldQueue;
+use Illuminate\Foundation\Bus\Dispatchable;
+use Illuminate\Queue\InteractsWithQueue;
+use Illuminate\Queue\SerializesModels;
+
+class ProcessWidgetMetricsJob implements ShouldQueue
+{
+    use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
+
+    public function __construct(
+        private Widget $widget,
+        private array $metrics
+    ) {}
+
+    public function handle(WidgetMetricsService $metricsService): void
+    {
+        $metricsService->processMetrics($this->widget, $this->metrics);
+    }
+}
+
+// app/Core/Widget/Queue/Jobs/GenerateWidgetReportJob.php
+<?php
+
+namespace App\Core\Widget\Queue\Jobs;
+
+use App\Core\Widget\Models\Widget;
+use App\Core\Widget\Services\WidgetReportService;
+use Carbon\Carbon;
+use Illuminate\Bus\Queueable;
+use Illuminate\Contracts\Queue\ShouldQueue;
+use Illuminate\Foundation\Bus\Dispatchable;
+use Illuminate\Queue\InteractsWithQueue;
+use Illuminate\Queue\SerializesModels;
+
+class GenerateWidgetReportJob implements ShouldQueue
+{
+    use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
+
+    public function __construct(
+        private Widget $widget,
+        private string $reportType,
+        private Carbon $startDate,
+        private Carbon $endDate
+    ) {}
+
+    public function handle(WidgetReportService $reportService): void
+    {
+        $reportService->generateReport(
+            $this->widget,
+            $this->reportType,
+            $this->startDate,
+            $this->endDate
+        );
+    }
+}

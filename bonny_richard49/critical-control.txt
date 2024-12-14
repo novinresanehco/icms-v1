@@ -1,0 +1,151 @@
+<?php
+
+namespace App\Core\Control;
+
+class CriticalControlManager implements ControlInterface
+{
+    private SecurityManager $security;
+    private ValidationService $validator;
+    private MonitoringService $monitor;
+    private LogManager $logger;
+
+    public function executeCriticalOperation(string $type, array $data): Result
+    {
+        $operationId = $this->monitor->startOperation($type);
+        
+        try {
+            // Pre-execution validation
+            $this->validateOperation($type, $data);
+            
+            DB::beginTransaction();
+            
+            // Execute with protection
+            $result = $this->executeProtected($type, $data);
+            
+            // Validate result
+            $this->validateResult($result);
+            
+            DB::commit();
+            
+            return $result;
+            
+        } catch (\Exception $e) {
+            DB::rollBack();
+            $this->handleFailure($e, $operationId);
+            throw new SystemException('Critical operation failed', 0, $e); 
+        }
+    }
+
+    private function validateOperation(string $type, array $data): void
+    {
+        if (!$this->security->validateContext($type)) {
+            throw new SecurityException('Invalid security context');
+        }
+
+        if (!$this->validator->validateData($data)) {
+            throw new ValidationException('Invalid input data');
+        }
+
+        if (!$this->monitor->checkResources()) {
+            throw new ResourceException('Insufficient resources');
+        }
+    }
+
+    private function executeProtected(string $type, array $data): Result
+    {
+        return $this->security->executeWithProtection(function() use ($type, $data) {
+            return $this->processOperation($type, $data);
+        });
+    }
+
+    private function validateResult(Result $result): void
+    {
+        if (!$this->validator->validateIntegrity($result)) {
+            throw new ValidationException('Result integrity check failed');
+        }
+
+        if (!$this->validator->validateConstraints($result)) {
+            throw new ValidationException('Result constraints failed');
+        }
+
+        if (!$this->security->validateResultSecurity($result)) {
+            throw new SecurityException('Result security validation failed');
+        }
+    }
+
+    private function handleFailure(\Exception $e, string $operationId): void
+    {
+        // Log failure
+        $this->logger->logFailure($operationId, [
+            'error' => $e->getMessage(),
+            'trace' => $e->getTraceAsString(),
+            'context' => $this->getFailureContext()
+        ]);
+
+        // Alert monitoring
+        $this->monitor->alertFailure($operationId, $e);
+
+        // Execute recovery
+        $this->executeRecovery($operationId);
+    }
+
+    private function executeRecovery(string $operationId): void
+    {
+        $this->security->resetSecurityContext();
+        $this->monitor->resetOperation($operationId);
+        $this->clearSensitiveData();
+    }
+
+    private function getFailureContext(): array
+    {
+        return [
+            'memory_usage' => memory_get_usage(true),
+            'system_load' => sys_getloadavg(),
+            'timestamp' => microtime(true)
+        ];
+    }
+
+    private function clearSensitiveData(): void
+    {
+        // Clear security data
+        $this->security->clearSensitiveData();
+        
+        // Clear operation data
+        $this->clearOperationData();
+        
+        // Reset validation state
+        $this->validator->reset();
+    }
+}
+
+interface ControlInterface
+{
+    public function executeCriticalOperation(string $type, array $data): Result;
+}
+
+class Result
+{
+    private array $data;
+    private bool $success;
+
+    public function __construct(array $data, bool $success = true)
+    {
+        $this->data = $data;
+        $this->success = $success;
+    }
+
+    public function getData(): array
+    {
+        return $this->data;
+    }
+
+    public function isSuccess(): bool
+    {
+        return $this->success;
+    }
+}
+
+class SystemException extends \Exception {}
+class SecurityException extends \Exception {}
+class ValidationException extends \Exception {}
+class ResourceException extends \Exception {}

@@ -1,0 +1,212 @@
+<?php
+
+namespace App\Core\Security\Detection;
+
+class PatternDatabase implements PatternDatabaseInterface
+{
+    private DatabaseConnection $db;
+    private CacheManager $cache;
+    private IntegrityValidator $validator;
+    private AuditLogger $logger;
+    private array $config;
+
+    public function matchStaticPatterns(array $data, array $options = []): array
+    {
+        $operationId = uniqid('static_match_', true);
+
+        try {
+            // Load patterns
+            $patterns = $this->loadPatterns('static', $options);
+
+            // Validate patterns
+            $this->validatePatterns($patterns);
+
+            // Perform matching
+            $matches = $this->performStaticMatching($data, $patterns, $options);
+
+            // Validate matches
+            $this->validateMatches($matches);
+
+            return $matches;
+
+        } catch (\Throwable $e) {
+            $this->handleMatchingFailure($e, $operationId);
+            throw $e;
+        }
+    }
+
+    public function matchDynamicPatterns(array $data, array $options = []): array
+    {
+        $operationId = uniqid('dynamic_match_', true);
+
+        try {
+            // Load patterns with context
+            $patterns = $this->loadPatternsWithContext('dynamic', $options);
+
+            // Validate patterns with context
+            $this->validatePatternsWithContext($patterns);
+
+            // Perform contextual matching
+            $matches = $this->performDynamicMatching($data, $patterns, $options);
+
+            // Validate contextual matches
+            $this->validateContextualMatches($matches);
+
+            return $matches;
+
+        } catch (\Throwable $e) {
+            $this->handleMatchingFailure($e, $operationId);
+            throw $e;
+        }
+    }
+
+    protected function loadPatterns(string $type, array $options): array
+    {
+        // Try cache first
+        $cacheKey = $this->generateCacheKey($type, $options);
+        $patterns = $this->cache->get($cacheKey);
+
+        if (!$patterns) {
+            // Load from database
+            $patterns = $this->db->getPatterns([
+                'type' => $type,
+                'status' => 'active',
+                'options' => $options
+            ]);
+
+            // Cache patterns
+            $this->cache->set(
+                $cacheKey,
+                $patterns,
+                $this->config['pattern_cache_ttl']
+            );
+        }
+
+        return $patterns;
+    }
+
+    protected function loadPatternsWithContext(string $type, array $options): array
+    {
+        $patterns = $this->loadPatterns($type, $options);
+
+        foreach ($patterns as &$pattern) {
+            $pattern['context'] = $this->loadPatternContext($pattern['id']);
+            $pattern['behavior'] = $this->loadPatternBehavior($pattern['id']);
+            $pattern['metadata'] = $this->loadPatternMetadata($pattern['id']);
+        }
+
+        return $patterns;
+    }
+
+    protected function performStaticMatching(
+        array $data,
+        array $patterns,
+        array $options
+    ): array {
+        $matches = [];
+
+        foreach ($patterns as $pattern) {
+            if ($this->matchesStaticPattern($data, $pattern, $options)) {
+                $matches[] = [
+                    'pattern' => $pattern,
+                    'location' => $this->findMatchLocation($data, $pattern),
+                    'confidence' => $this->calculateMatchConfidence($data, $pattern),
+                    'context' => $this->extractMatchContext($data, $pattern)
+                ];
+            }
+        }
+
+        return $matches;
+    }
+
+    protected function performDynamicMatching(
+        array $data,
+        array $patterns,
+        array $options
+    ): array {
+        $matches = [];
+        $context = $this->buildMatchingContext($data, $options);
+
+        foreach ($patterns as $pattern) {
+            if ($this->matchesDynamicPattern($data, $pattern, $context)) {
+                $matches[] = [
+                    'pattern' => $pattern,
+                    'context' => $context,
+                    'behavior' => $this->analyzeBehavior($data, $pattern),
+                    'confidence' => $this->calculateDynamicConfidence(
+                        $data,
+                        $pattern,
+                        $context
+                    ),
+                    'metadata' => $this->extractDynamicMetadata(
+                        $data,
+                        $pattern,
+                        $context
+                    )
+                ];
+            }
+        }
+
+        return $matches;
+    }
+
+    protected function validatePatterns(array $patterns): void
+    {
+        foreach ($patterns as $pattern) {
+            if (!$this->validator->validatePattern($pattern)) {
+                throw new ValidationException(
+                    "Invalid pattern structure: {$pattern['id']}"
+                );
+            }
+
+            if (!$this->validator->validatePatternIntegrity($pattern)) {
+                throw new IntegrityException(
+                    "Pattern integrity check failed: {$pattern['id']}"
+                );
+            }
+        }
+    }
+
+    protected function validatePatternsWithContext(array $patterns): void
+    {
+        $this->validatePatterns($patterns);
+
+        foreach ($patterns as $pattern) {
+            if (!$this->validator->validateContext($pattern['context'])) {
+                throw new ValidationException(
+                    "Invalid pattern context: {$pattern['id']}"
+                );
+            }
+
+            if (!$this->validator->validateBehavior($pattern['behavior'])) {
+                throw new ValidationException(
+                    "Invalid pattern behavior: {$pattern['id']}"
+                );
+            }
+        }
+    }
+
+    protected function buildMatchingContext(array $data, array $options): array
+    {
+        return [
+            'timestamp' => time(),
+            'environment' => $this->config['environment'],
+            'sensitivity' => $options['sensitivity'] ?? 'normal',
+            'data_context' => $this->extractDataContext($data),
+            'system_context' => $this->getSystemContext(),
+            'historical_context' => $this->getHistoricalContext($data)
+        ];
+    }
+
+    protected function handleMatchingFailure(
+        \Throwable $e,
+        string $operationId
+    ): void {
+        $this->logger->error('Pattern matching failed', [
+            'operation_id' => $operationId,
+            'error' => $e->getMessage(),
+            'trace' => $e->getTraceAsString()
+        ]);
+
+        if ($this->isCriticalFailure($e)) {
+            $this

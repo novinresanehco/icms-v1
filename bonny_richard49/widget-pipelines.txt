@@ -1,0 +1,232 @@
+// app/Core/Widget/Pipelines/WidgetPipeline.php
+<?php
+
+namespace App\Core\Widget\Pipelines;
+
+use App\Core\Widget\Models\Widget;
+use Illuminate\Pipeline\Pipeline;
+
+class WidgetPipeline
+{
+    public function process(Widget $widget): Widget
+    {
+        return app(Pipeline::class)
+            ->send($widget)
+            ->through([
+                \App\Core\Widget\Pipelines\Pipes\ValidateWidget::class,
+                \App\Core\Widget\Pipelines\Pipes\ProcessSettings::class,
+                \App\Core\Widget\Pipelines\Pipes\OptimizeWidget::class,
+                \App\Core\Widget\Pipelines\Pipes\CacheWidget::class,
+            ])
+            ->thenReturn();
+    }
+}
+
+// app/Core/Widget/Pipelines/Pipes/ValidateWidget.php
+<?php
+
+namespace App\Core\Widget\Pipelines\Pipes;
+
+use App\Core\Widget\Models\Widget;
+use Closure;
+
+class ValidateWidget
+{
+    public function handle(Widget $widget, Closure $next)
+    {
+        // Validation logic here
+        if (!$this->isValid($widget)) {
+            throw new \InvalidArgumentException('Invalid widget configuration');
+        }
+
+        return $next($widget);
+    }
+
+    private function isValid(Widget $widget): bool
+    {
+        // Validation rules
+        return true;
+    }
+}
+
+// app/Core/Widget/Pipelines/Pipes/ProcessSettings.php
+<?php
+
+namespace App\Core\Widget\Pipelines\Pipes;
+
+use App\Core\Widget\Models\Widget;
+use Closure;
+
+class ProcessSettings
+{
+    public function handle(Widget $widget, Closure $next)
+    {
+        $widget->settings = $this->processSettings($widget->settings);
+        return $next($widget);
+    }
+
+    private function processSettings(array $settings): array
+    {
+        // Process and transform settings
+        return $settings;
+    }
+}
+
+// app/Core/Widget/Pipelines/Pipes/OptimizeWidget.php
+<?php
+
+namespace App\Core\Widget\Pipelines\Pipes;
+
+use App\Core\Widget\Models\Widget;
+use Closure;
+
+class OptimizeWidget
+{
+    public function handle(Widget $widget, Closure $next)
+    {
+        // Optimization logic
+        return $next($widget);
+    }
+}
+
+// app/Core/Widget/Pipelines/Pipes/CacheWidget.php
+<?php
+
+namespace App\Core\Widget\Pipelines\Pipes;
+
+use App\Core\Widget\Models\Widget;
+use Closure;
+use Illuminate\Support\Facades\Cache;
+
+class CacheWidget
+{
+    public function handle(Widget $widget, Closure $next)
+    {
+        if ($widget->cache_ttl) {
+            Cache::tags(['widgets', "widget:{$widget->id}"])
+                ->put($this->getCacheKey($widget), $widget, $widget->cache_ttl);
+        }
+
+        return $next($widget);
+    }
+
+    private function getCacheKey(Widget $widget): string
+    {
+        return "widget:{$widget->id}:data";
+    }
+}
+
+// app/Core/Widget/Pipelines/WidgetMetricsPipeline.php
+<?php
+
+namespace App\Core\Widget\Pipelines;
+
+use App\Core\Widget\Models\Widget;
+use Illuminate\Pipeline\Pipeline;
+
+class WidgetMetricsPipeline
+{
+    public function process(Widget $widget, array $metrics): array
+    {
+        return app(Pipeline::class)
+            ->send($metrics)
+            ->through([
+                \App\Core\Widget\Pipelines\Pipes\ValidateMetrics::class,
+                \App\Core\Widget\Pipelines\Pipes\NormalizeMetrics::class,
+                \App\Core\Widget\Pipelines\Pipes\AggregateMetrics::class,
+                \App\Core\Widget\Pipelines\Pipes\StoreMetrics::class,
+            ])
+            ->thenReturn();
+    }
+}
+
+// app/Core/Widget/Pipelines/Pipes/ValidateMetrics.php
+<?php
+
+namespace App\Core\Widget\Pipelines\Pipes;
+
+use Closure;
+
+class ValidateMetrics
+{
+    public function handle(array $metrics, Closure $next)
+    {
+        // Validation logic here
+        if (!$this->areValid($metrics)) {
+            throw new \InvalidArgumentException('Invalid metrics data');
+        }
+
+        return $next($metrics);
+    }
+
+    private function areValid(array $metrics): bool
+    {
+        // Validation rules
+        return true;
+    }
+}
+
+// app/Core/Widget/Pipelines/Pipes/NormalizeMetrics.php
+<?php
+
+namespace App\Core\Widget\Pipelines\Pipes;
+
+use Closure;
+
+class NormalizeMetrics
+{
+    public function handle(array $metrics, Closure $next)
+    {
+        return $next($this->normalize($metrics));
+    }
+
+    private function normalize(array $metrics): array
+    {
+        // Normalize metrics values
+        return $metrics;
+    }
+}
+
+// app/Core/Widget/Pipelines/Pipes/AggregateMetrics.php
+<?php
+
+namespace App\Core\Widget\Pipelines\Pipes;
+
+use Closure;
+
+class AggregateMetrics
+{
+    public function handle(array $metrics, Closure $next)
+    {
+        return $next($this->aggregate($metrics));
+    }
+
+    private function aggregate(array $metrics): array
+    {
+        // Aggregate metrics data
+        return $metrics;
+    }
+}
+
+// app/Core/Widget/Pipelines/Pipes/StoreMetrics.php
+<?php
+
+namespace App\Core\Widget\Pipelines\Pipes;
+
+use Closure;
+use Illuminate\Support\Facades\DB;
+
+class StoreMetrics
+{
+    public function handle(array $metrics, Closure $next)
+    {
+        DB::table('widget_metrics')->insert($this->prepareForStorage($metrics));
+        return $next($metrics);
+    }
+
+    private function prepareForStorage(array $metrics): array
+    {
+        // Prepare metrics for storage
+        return $metrics;
+    }
+}

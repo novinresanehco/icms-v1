@@ -1,0 +1,85 @@
+// resources/views/widgets/content.blade.php
+<div class="widget widget-content" id="widget-{{ $widget->id }}">
+    @if($widget->settings['show_title'])
+        <h3 class="widget-title">{{ $widget->title }}</h3>
+    @endif
+
+    <div class="widget-content-items">
+        @forelse($items as $item)
+            <div class="widget-content-item">
+                <h4 class="item-title">{{ $item['title'] }}</h4>
+                
+                @if($widget->settings['show_date'])
+                    <div class="item-date">{{ $item['date'] }}</div>
+                @endif
+                
+                <div class="item-excerpt">{{ $item['excerpt'] }}</div>
+            </div>
+        @empty
+            <div class="widget-no-content">{{ __('No content available') }}</div>
+        @endforelse
+    </div>
+</div>
+
+// resources/views/widgets/menu.blade.php
+<div class="widget widget-menu" id="widget-{{ $widget->id }}">
+    <h3 class="widget-title">{{ $widget->title }}</h3>
+    
+    <nav class="widget-menu-nav">
+        @if(!empty($menu_items))
+            <ul class="menu-items">
+                @foreach($menu_items as $item)
+                    <li class="menu-item {{ $item['active'] ? 'active' : '' }}">
+                        <a href="{{ $item['url'] }}" class="menu-link">
+                            {{ $item['label'] }}
+                            
+                            @if($widget->settings['show_description'] && !empty($item['description']))
+                                <span class="menu-description">{{ $item['description'] }}</span>
+                            @endif
+                        </a>
+                        
+                        @if(!empty($item['children']))
+                            @include('widgets.menu.submenu', ['items' => $item['children']])
+                        @endif
+                    </li>
+                @endforeach
+            </ul>
+        @else
+            <div class="widget-no-menu">{{ __('No menu items available') }}</div>
+        @endif
+    </nav>
+</div>
+
+// resources/views/widgets/social.blade.php
+<div class="widget widget-social" id="widget-{{ $widget->id }}">
+    <h3 class="widget-title">{{ $widget->title }}</h3>
+    
+    @if(!empty($networks))
+        <ul class="social-networks">
+            @foreach($networks as $network)
+                <li class="social-network">
+                    <a href="{{ $network['url'] }}" 
+                       target="{{ $widget->settings['target'] }}"
+                       class="social-link {{ $network['name'] }}">
+                        @if($widget->settings['show_icons'])
+                            <i class="icon icon-{{ $network['name'] }}"></i>
+                        @endif
+                        <span class="network-label">{{ $network['label'] }}</span>
+                    </a>
+                </li>
+            @endforeach
+        </ul>
+    @else
+        <div class="widget-no-social">{{ __('No social networks configured') }}</div>
+    @endif
+</div>
+
+// resources/views/widgets/menu/submenu.blade.php
+@if(!empty($items))
+    <ul class="submenu">
+        @foreach($items as $item)
+            <li class="submenu-item {{ $item['active'] ? 'active' : '' }}">
+                <a href="{{ $item['url'] }}" class="submenu-link">
+                    {{ $item['label'] }}
+                    
+                

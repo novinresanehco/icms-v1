@@ -1,0 +1,223 @@
+<?php
+
+namespace App\Core\Base;
+
+/**
+ * Critical Base Service Class
+ * Provides core functionality, security, and monitoring for all services
+ */
+abstract class BaseService implements ServiceInterface
+{
+    protected SecurityManager $security;
+    protected ValidationService $validator;
+    protected LogManager $logger;
+    protected CacheManager $cache;
+    protected MonitoringService $monitor;
+    protected array $config;
+    protected array $metrics = [];
+
+    public function __construct(
+        SecurityManager $security,
+        ValidationService $validator,
+        LogManager $logger,
+        CacheManager $cache,
+        MonitoringService $monitor,
+        array $config
+    ) {
+        $this->security = $security;
+        $this->validator = $validator;
+        $this->logger = $logger;
+        $this->cache = $cache;
+        $this->monitor = $monitor;
+        $this->config = $config;
+    }
+
+    protected function executeSecureOperation(callable $operation, array $context = []): mixed
+    {
+        // Start monitoring transaction
+        $transaction = $this->monitor->startTransaction(static::class);
+
+        try {
+            // Validate operation context
+            $this->validateOperationContext($context);
+
+            // Verify security constraints
+            $this->security->validateOperation($context);
+
+            // Begin database transaction if needed
+            if ($this->requiresTransaction($context)) {
+                DB::beginTransaction();
+            }
+
+            // Execute operation with monitoring
+            $result = $this->monitor->track(function() use ($operation, $context) {
+                return $operation($context);
+            });
+
+            // Validate operation result
+            $this->validateOperationResult($result, $context);
+
+            // Commit transaction if active
+            if (DB::transactionLevel() > 0) {
+                DB::commit();
+            }
+
+            // Record metrics
+            $this->recordOperationMetrics($result, $transaction);
+
+            // Complete monitoring transaction
+            $this->monitor->endTransaction($transaction, [
+                'status' => 'success',
+                'result' => $result
+            ]);
+
+            return $result;
+
+        } catch (\Exception $e) {
+            // Rollback transaction if active
+            if (DB::transactionLevel() > 0) {
+                DB::rollBack();
+            }
+
+            // Handle failure
+            $this->handleOperationFailure($e, $context, $transaction);
+
+            throw $e;
+        }
+    }
+
+    protected function executeWithCache(string $key, callable $operation, ?int $ttl = null): mixed
+    {
+        return $this->cache->remember($key, function() use ($operation) {
+            return $this->executeSecureOperation($operation);
+        }, $ttl);
+    }
+
+    protected function validateOperationContext(array $context): void
+    {
+        // Validate required fields
+        foreach ($this->getRequiredContextFields() as $field) {
+            if (!isset($context[$field])) {
+                throw new ValidationException("Missing required field: $field");
+            }
+        }
+
+        // Validate field types and values
+        foreach ($this->getContextValidationRules() as $field => $rules) {
+            if (isset($context[$field])) {
+                $this->validator->validate($context[$field], $rules);
+            }
+        }
+
+        // Validate business rules
+        $this->validateBusinessRules($context);
+    }
+
+    protected function validateOperationResult($result, array $context): void
+    {
+        // Validate result type
+        if (!$this->isValidResultType($result)) {
+            throw new ValidationException('Invalid operation result type');
+        }
+
+        // Validate result data
+        foreach ($this->getResultValidationRules() as $field => $rules) {
+            if (isset($result[$field])) {
+                $this->validator->validate($result[$field], $rules);
+            }
+        }
+
+        // Verify result integrity
+        $this->verifyResultIntegrity($result, $context);
+    }
+
+    protected function handleOperationFailure(\Exception $e, array $context, Transaction $transaction): void
+    {
+        // Log failure
+        $this->logger->error('Operation failed', [
+            'service' => static::class,
+            'context' => $context,
+            'exception' => get_class($e),
+            'message' => $e->getMessage(),
+            'trace' => $e->getTraceAsString()
+        ]);
+
+        // Record failure metrics
+        $this->recordFailureMetrics($e);
+
+        // Complete monitoring transaction
+        $this->monitor->endTransaction($transaction, [
+            'status' => 'failure',
+            'error' => get_class($e),
+            'message' => $e->getMessage()
+        ]);
+
+        // Execute failure recovery if possible
+        if ($this->canRecover($e)) {
+            $this->attemptRecovery($e, $context);
+        }
+
+        // Trigger alerts if needed
+        if ($this->isAlertableFailure($e)) {
+            $this->triggerFailureAlert($e, $context);
+        }
+    }
+
+    protected function requiresTransaction(array $context): bool
+    {
+        return in_array(static::class, $this->config['transactional_services'])
+            || ($context['options']['transactional'] ?? false);
+    }
+
+    protected function isValidResultType($result): bool
+    {
+        $expectedType = $this->getExpectedResultType();
+        
+        return match($expectedType) {
+            'array' => is_array($result),
+            'object' => is_object($result),
+            'mixed' => true,
+            default => $result instanceof $expectedType
+        };
+    }
+
+    protected function verifyResultIntegrity($result, array $context): void
+    {
+        // Verify data consistency
+        if (!$this->isDataConsistent($result, $context)) {
+            throw new IntegrityException('Operation result integrity check failed');
+        }
+
+        // Verify security constraints
+        $this->security->verifyResultSecurity($result, $context);
+
+        // Verify business rules
+        $this->verifyBusinessRules($result, $context);
+    }
+
+    protected function recordOperationMetrics($result, Transaction $transaction): void
+    {
+        $this->metrics['operations'][] = [
+            'type' => static::class,
+            'duration' => $transaction->getDuration(),
+            'timestamp' => microtime(true),
+            'memory' => memory_get_peak_usage(true),
+            'result_size' => $this->calculateResultSize($result)
+        ];
+
+        $this->monitor->recordMetrics(static::class, $this->metrics);
+    }
+
+    protected function recordFailureMetrics(\Exception $e): void
+    {
+        $this->metrics['failures'][] = [
+            'type' => static::class,
+            'exception' => get_class($e),
+            'timestamp' => microtime(true),
+            'context' => $this->getFailureContext($e)
+        ];
+
+        $this->monitor->recordMetrics(static::class, $this->metrics);
+    }
+
+    protected function attemptRecovery(\Exception $e, array $context

@@ -1,0 +1,25 @@
+/**
+     * Normalizes TTL value
+     */
+    private function normalizeTtl($ttl): ?int
+    {
+        if ($ttl instanceof \DateInterval) {
+            return (new \DateTime())->add($ttl)->getTimestamp() - time();
+        }
+        
+        if (is_int($ttl) && $ttl <= 0) {
+            return null;
+        }
+        
+        return $ttl ?? self::DEFAULT_TTL;
+    }
+
+    /**
+     * Checks if memory cache item is valid
+     */
+    private function isMemoryCacheValid(string $key): bool
+    {
+        return !self::$memoryCache[$key]['ttl'] || 
+            self::$memoryCache[$key]['ttl'] > time();
+    }
+}

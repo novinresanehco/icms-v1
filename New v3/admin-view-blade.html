@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="{{ str_replace('_', '-', app()->getLocale()) }}">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="csrf-token" content="{{ csrf_token() }}">
+    <title>{{ config('app.name') }} - @yield('title')</title>
+    <link href="{{ asset('css/admin.css') }}" rel="stylesheet">
+    @stack('styles')
+</head>
+<body class="admin-panel">
+    @include('admin.partials.header')
+
+    <div class="admin-container">
+        @include('admin.partials.sidebar')
+
+        <main class="admin-main">
+            @include('admin.partials.breadcrumbs')
+            
+            <div class="admin-content">
+                @include('admin.partials.alerts')
+                
+                <header class="content-header">
+                    <h1>@yield('title')</h1>
+                    @yield('actions')
+                </header>
+
+                @yield('content')
+            </div>
+        </main>
+    </div>
+
+    @include('admin.partials.footer')
+    @include('admin.partials.modals')
+
+    <script src="{{ asset('js/admin.js') }}"></script>
+    <script>
+        window.App = {
+            csrfToken: '{{ csrf_token() }}',
+            baseUrl: '{{ url('/') }}',
+            user: @json(Auth::user()),
+            permissions: @json(Auth::user()->getAllPermissions()),
+            config: {
+                dateFormat: '{{ config('app.date_format') }}',
+                timeFormat: '{{ config('app.time_format') }}',
+                timezone: '{{ config('app.timezone') }}'
+            }
+        };
+    </script>
+    @stack('scripts')
+</body>
+</html>
+
+@section('modals')
+    <div id="confirmModal" class="modal">
+        <div class="modal-content">
+            <h3>Confirm Action</h3>
+            <p id="confirmMessage"></p>
+            <div class="modal-actions">
+                <button class="btn btn-secondary" data-dismiss="modal">Cancel</button>
+                <button class="btn btn-danger" id="confirmAction">Confirm</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="loadingModal" class="modal">
+        <div class="modal-content">
+            <div class="spinner"></div>
+            <p>Processing...</p>
+        </div>
+    </div>
+@endsection

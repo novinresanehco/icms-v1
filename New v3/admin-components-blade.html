@@ -1,0 +1,147 @@
+{{-- Data Table Component --}}
+@component('admin.components.data-table', [
+    'id' => $id ?? 'dataTable',
+    'columns' => $columns,
+    'data' => $data,
+    'actions' => $actions ?? [],
+    'filters' => $filters ?? [],
+    'sortable' => $sortable ?? true,
+    'searchable' => $searchable ?? true,
+    'pagination' => $pagination ?? true
+])
+@endcomponent
+
+{{-- Form Components --}}
+@component('admin.components.form', [
+    'id' => $id ?? 'form',
+    'action' => $action,
+    'method' => $method ?? 'POST',
+    'files' => $files ?? false,
+    'class' => $class ?? ''
+])
+    @slot('header')
+        <h2>{{ $title }}</h2>
+    @endslot
+
+    {{ $slot }}
+
+    @slot('footer')
+        <div class="form-actions">
+            <button type="submit" class="btn btn-primary">{{ $submitText ?? 'Save' }}</button>
+            <button type="button" class="btn btn-secondary" data-dismiss="modal">Cancel</button>
+        </div>
+    @endslot
+@endcomponent
+
+{{-- Chart Components --}}
+@component('admin.components.chart', [
+    'id' => $id ?? 'chart',
+    'type' => $type,
+    'data' => $data,
+    'options' => $options ?? [],
+    'height' => $height ?? 300
+])
+@endcomponent
+
+{{-- Alert Component --}}
+@component('admin.components.alert', [
+    'type' => $type,
+    'dismissible' => $dismissible ?? true
+])
+    {{ $slot }}
+@endcomponent
+
+{{-- Modal Component --}}
+@component('admin.components.modal', [
+    'id' => $id,
+    'title' => $title,
+    'size' => $size ?? 'medium',
+    'closeButton' => $closeButton ?? true
+])
+    {{ $slot }}
+@endcomponent
+
+{{-- Tab Component --}}
+@component('admin.components.tabs', [
+    'id' => $id ?? 'tabs',
+    'tabs' => $tabs,
+    'active' => $active ?? null
+])
+    {{ $slot }}
+@endcomponent
+
+{{-- Card Component --}}
+@component('admin.components.card', [
+    'title' => $title ?? null,
+    'subtitle' => $subtitle ?? null,
+    'actions' => $actions ?? [],
+    'class' => $class ?? ''
+])
+    {{ $slot }}
+@endcomponent
+
+{{-- Validation Errors Component --}}
+@if ($errors->any())
+    <div class="alert alert-danger">
+        <ul>
+            @foreach ($errors->all() as $error)
+                <li>{{ $error }}</li>
+            @endforeach
+        </ul>
+    </div>
+@endif
+
+{{-- Component Scripts --}}
+@push('scripts')
+<script>
+class AdminComponents {
+    static init() {
+        this.initDataTables();
+        this.initCharts();
+        this.initForms();
+        this.initModals();
+        this.initTabs();
+    }
+
+    static initDataTables() {
+        document.querySelectorAll('.data-table').forEach(table => {
+            const config = JSON.parse(table.dataset.config);
+            new DataTable(table, {
+                serverSide: true,
+                processing: true,
+                ...config
+            });
+        });
+    }
+
+    static initCharts() {
+        document.querySelectorAll('.chart').forEach(chart => {
+            const config = JSON.parse(chart.dataset.config);
+            new Chart(chart, config);
+        });
+    }
+
+    static initForms() {
+        document.querySelectorAll('form[data-validate]').forEach(form => {
+            new FormValidator(form);
+        });
+    }
+
+    static initModals() {
+        document.querySelectorAll('.modal').forEach(modal => {
+            new Modal(modal);
+        });
+    }
+
+    static initTabs() {
+        document.querySelectorAll('.tabs').forEach(tabs => {
+            new Tabs(tabs);
+        });
+    }
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+    AdminComponents.init();
+});
+</script>
+@endpush
